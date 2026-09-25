@@ -1,0 +1,741 @@
+<div id="loom-backdrop">
+    <div id="loom-panel">
+
+        <header class="loom-header">
+            <div class="loom-brand">
+                <i class="fa-solid fa-scroll"></i>
+                <span class="loom-brand-name">LOOM</span>
+                <span class="loom-brand-sub">мастерская миров</span>
+            </div>
+            <div class="loom-header-actions">
+                <button id="loom-import-btn" class="loom-icon-btn" title="Импорт">
+                    <i class="fa-solid fa-file-import"></i>
+                </button>
+                <button id="loom-settings-btn" class="loom-icon-btn" title="Настройки">
+                    <i class="fa-solid fa-sliders"></i>
+                </button>
+                <button id="loom-close-btn" class="loom-icon-btn" title="Закрыть">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </header>
+
+        <div class="loom-body">
+            <aside class="loom-sidebar">
+                <div class="loom-new-buttons">
+                    <button class="loom-btn loom-btn-primary loom-new" data-mode="character">
+                        <i class="fa-solid fa-user-pen"></i> Персонаж
+                    </button>
+                    <button class="loom-btn loom-btn-primary loom-new" data-mode="persona">
+                        <i class="fa-solid fa-user-tag"></i> Персона
+                    </button>
+                    <button class="loom-btn loom-btn-primary loom-new" data-mode="lorebook">
+                        <i class="fa-solid fa-book-open"></i> Лорбук
+                    </button>
+                    <button class="loom-btn loom-btn-primary loom-new" data-mode="plot">
+                        <i class="fa-solid fa-route"></i> Сюжет
+                    </button>
+                    <button class="loom-btn loom-btn-primary loom-new" data-mode="prompt">
+                        <i class="fa-solid fa-terminal"></i> Промпт
+                    </button>
+                    <button class="loom-btn loom-btn-primary loom-new" data-mode="preset">
+                        <i class="fa-solid fa-layer-group"></i> Пресет
+                    </button>
+                </div>
+                <!-- Только на мобильной раскладке (CSS) — вместо сетки 3×2 выше -->
+                <button type="button" id="loom-new-toggle" class="loom-btn loom-btn-primary">
+                    <i class="fa-solid fa-plus"></i> Создать
+                </button>
+                <label class="loom-draft-search-box" hidden>
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="search" id="loom-draft-search" placeholder="Поиск по имени и заметке" autocomplete="off">
+                    <button type="button" id="loom-draft-search-clear" class="loom-icon-btn" title="Очистить" hidden>
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </label>
+                <div id="loom-draft-list" class="loom-draft-list"></div>
+            </aside>
+
+            <main id="loom-main" class="loom-main"></main>
+        </div>
+
+        <!-- ─── Настройки ─────────────────────────────────────────────── -->
+        <div id="loom-settings" class="loom-overlay">
+            <div class="loom-overlay-card">
+                <header class="loom-overlay-header">
+                    <span><i class="fa-solid fa-sliders"></i> Настройки LOOM</span>
+                    <button id="loom-settings-close" class="loom-icon-btn"><i class="fa-solid fa-xmark"></i></button>
+                </header>
+
+                <nav class="loom-tabs">
+                    <button class="loom-tab active" data-tab="connection">Подключение</button>
+                    <button class="loom-tab" data-tab="thinking">Рассуждения</button>
+                    <button class="loom-tab" data-tab="style">Стиль</button>
+                    <button class="loom-tab" data-tab="theme">Оформление</button>
+                    <button class="loom-tab" data-tab="formats">Форматы</button>
+                    <button class="loom-tab" data-tab="plot">Сюжет</button>
+                    <button class="loom-tab" data-tab="keys">Ключи лорбука</button>
+                </nav>
+
+                <div class="loom-overlay-body">
+
+                    <section class="loom-tab-page active" data-page="connection">
+                        <label class="loom-field">
+                            <span class="loom-label">Профиль подключения</span>
+                            <select id="loom-profile"></select>
+                            <span class="loom-hint">«Главный API Таверны» — тот, что выбран в чате.</span>
+                        </label>
+
+                        <label class="loom-field">
+                            <span class="loom-label">Лимит токенов ответа: <b id="loom-max-tokens-val">4000</b></span>
+                            <input type="range" id="loom-max-tokens" min="0" max="16000" step="500">
+                            <span class="loom-hint">0 — из пресета профиля.</span>
+                        </label>
+                    </section>
+
+                    <section class="loom-tab-page" data-page="thinking">
+                        <label class="loom-field">
+                            <span class="loom-label">Бюджет размышлений</span>
+                            <select id="loom-thinking-budget">
+                                <option value="inherit">Наследовать (не вмешиваться)</option>
+                                <option value="disabled">Выключить</option>
+                                <option value="min">Минимум</option>
+                                <option value="low">Низкий</option>
+                                <option value="medium">Средний</option>
+                                <option value="high">Высокий</option>
+                                <option value="max">Максимум</option>
+                            </select>
+                            <span class="loom-hint">Размышления тратят те же токены, что и ответ.</span>
+                        </label>
+
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-reasoning-auto-parse">
+                            <span>Вырезать размышления из ответа</span>
+                        </label>
+
+                        <div class="loom-row">
+                            <label class="loom-field">
+                                <span class="loom-label">Открывающий тег</span>
+                                <input type="text" id="loom-reasoning-prefix" placeholder="&lt;thinking&gt;">
+                            </label>
+                            <label class="loom-field">
+                                <span class="loom-label">Закрывающий тег</span>
+                                <input type="text" id="loom-reasoning-suffix" placeholder="&lt;/thinking&gt;">
+                            </label>
+                        </div>
+
+                        <label class="loom-field">
+                            <span class="loom-label">Начинать ответ с</span>
+                            <input type="text" id="loom-start-reply-with" placeholder="пусто — взять из Таверны">
+                            <span class="loom-hint">Пусто — из Таверны.</span>
+                        </label>
+
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-thinking-hint-enabled">
+                            <span>Дописывать просьбу думать коротко</span>
+                        </label>
+                        <textarea id="loom-thinking-hint" rows="4"></textarea>
+
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-thinking-plan-enabled">
+                            <span>Думалка: план разбора перед ответом</span>
+                        </label>
+                        <span class="loom-hint">Теги должны совпадать с полями «Открывающий/Закрывающий тег».</span>
+
+                        <details class="loom-format-block loom-plan-block">
+                            <summary><span class="loom-format-title">Думалка: персонаж</span></summary>
+                            <div class="loom-format-body"><textarea id="loom-thinking-plan-character" rows="10"></textarea></div>
+                        </details>
+
+                        <details class="loom-format-block loom-plan-block">
+                            <summary><span class="loom-format-title">Думалка: лорбук</span></summary>
+                            <div class="loom-format-body"><textarea id="loom-thinking-plan-lorebook" rows="10"></textarea></div>
+                        </details>
+
+                        <details class="loom-format-block loom-plan-block">
+                            <summary><span class="loom-format-title">Думалка: системный промпт</span></summary>
+                            <div class="loom-format-body"><textarea id="loom-thinking-plan-prompt" rows="10"></textarea></div>
+                        </details>
+                    </section>
+
+                    <section class="loom-tab-page" data-page="style">
+                        <label class="loom-field">
+                            <span class="loom-label">Писать на</span>
+                            <select id="loom-output-language">
+                                <option value="русский">Русском</option>
+                                <option value="English">Английском</option>
+                            </select>
+                        </label>
+
+                        <label class="loom-field">
+                            <span class="loom-label">Правила письма</span>
+                            <textarea id="loom-style-prompt" rows="6"></textarea>
+                            <span class="loom-hint">Идёт в каждый промпт: тон, плотность, запреты.</span>
+                        </label>
+
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-translate-keep-names">
+                            <span>При переводе дублировать имена собственные оригиналом в скобках</span>
+                        </label>
+
+
+                        <div class="loom-row">
+                            <label class="loom-field">
+                                <span class="loom-label">Порог «переписать»: <b id="loom-rewrite-th-val">6</b></span>
+                                <input type="range" id="loom-rewrite-th" min="1" max="9" step="1">
+                            </label>
+                            <label class="loom-field">
+                                <span class="loom-label">Порог «сохранить»: <b id="loom-keep-th-val">8</b></span>
+                                <input type="range" id="loom-keep-th" min="2" max="10" step="1">
+                            </label>
+                        </div>
+                        <span class="loom-hint">Ниже первого — с нуля, выше второго — почти дословно.</span>
+                    </section>
+
+                    <section class="loom-tab-page" data-page="theme">
+                        <label class="loom-field">
+                            <span class="loom-label">Где кнопка LOOM</span>
+                            <select id="loom-launcher-place">
+                                <option value="wand">В меню волшебной палочки</option>
+                                <option value="list">В списке расширений</option>
+                            </select>
+                        </label>
+
+                        <div class="loom-settings-subhead">Тема панели</div>
+                        <div id="loom-theme-picker"></div>
+
+                        <div class="loom-settings-subhead">Папки в списке персонажей</div>
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-folders-enabled">
+                            <span>Долгое нажатие на кнопку «папки» в списке персонажей Таверны</span>
+                        </label>
+                        <span class="loom-hint">Отметьте персонажей и тапните папку — они переедут.</span>
+
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-folders-dropdown-view">
+                            <span>Открывать папку выпадающим списком, а не заходом в отдельный экран</span>
+                        </label>
+                        <span class="loom-hint">Список персонажей внутри карточки папки.</span>
+
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-folders-circles-view">
+                            <span>Показывать персонажей папки сеткой аватарок</span>
+                        </label>
+                        <span class="loom-hint">Аватарки сеткой, с именем.</span>
+                    </section>
+
+                    <section class="loom-tab-page" data-page="formats">
+
+                        <details class="loom-format-block" data-details-key="fmt-character">
+                            <summary>
+                                <span class="loom-format-title">Пункты карточки персонажа</span>
+                                <span class="loom-format-count" data-kind="character"></span>
+                            </summary>
+                            <div class="loom-format-body">
+                                <div class="loom-preset-row">
+                                <select class="loom-preset-select" data-kind="character"></select>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-save" data-kind="character"
+                                    title="Сохранить текущие пункты как свой пресет">
+                                    <i class="fa-solid fa-floppy-disk"></i> Сохранить как…
+                                </button>
+                                <button class="loom-icon-btn loom-preset-delete" data-kind="character" title="Удалить выбранный пресет">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                                <div class="loom-preset-row loom-format-tools">
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-format-add" data-kind="character"
+                                        title="Добавить пункт в конец списка">
+                                        <i class="fa-solid fa-plus"></i> Пункт
+                                    </button>
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-export" data-kind="character"
+                                        title="Скачать файлом пункты, что сейчас в списке. Режим и название записаны в файл">
+                                        <i class="fa-solid fa-file-export"></i> Экспорт
+                                    </button>
+                                    <label class="loom-btn loom-btn-ghost loom-btn-small loom-file-btn"
+                                        title="Загрузить пресет из файла — он появится в списке (в режим, записанный в файле)">
+                                        <i class="fa-solid fa-file-import"></i> Импорт
+                                        <input type="file" class="loom-preset-import" data-kind="character" accept="application/json,.json" multiple>
+                                    </label>
+                                </div>
+                                <div id="loom-format-character" class="loom-format-list"></div>
+                            </div>
+                        </details>
+
+
+                        <details class="loom-format-block loom-plan-block" data-details-key="fmt-prompt-scenario-card">
+                            <summary><span class="loom-format-title">Промпт сценария в карточке персонажа</span></summary>
+                            <div class="loom-format-body">
+                                <span class="loom-hint">Как писать сценарий.</span>
+                                <textarea id="loom-prompt-scenario-card" rows="14"></textarea>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-prompt-reset" data-setting="prompt-scenario-card"
+                                    title="Вернуть исходный текст этого промпта">
+                                    <i class="fa-solid fa-rotate-left"></i> Вернуть по умолчанию
+                                </button>
+                            </div>
+                        </details>
+
+                        <details class="loom-format-block loom-plan-block" data-details-key="fmt-prompt-first-mes">
+                            <summary><span class="loom-format-title">Промпт первого сообщения в карточке персонажа</span></summary>
+                            <div class="loom-format-body">
+                                <span class="loom-hint">Как писать первое сообщение и варианты.</span>
+                                <textarea id="loom-prompt-first-mes" rows="14"></textarea>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-prompt-reset" data-setting="prompt-first-mes"
+                                    title="Вернуть исходный текст этого промпта">
+                                    <i class="fa-solid fa-rotate-left"></i> Вернуть по умолчанию
+                                </button>
+                            </div>
+                        </details>
+
+                        <details class="loom-format-block" data-details-key="fmt-persona">
+                            <summary>
+                                <span class="loom-format-title">Пункты персоны</span>
+                                <span class="loom-format-count" data-kind="persona"></span>
+                            </summary>
+                            <div class="loom-format-body">
+                                <div class="loom-preset-row">
+                                <select class="loom-preset-select" data-kind="persona"></select>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-save" data-kind="persona"
+                                    title="Сохранить текущие пункты как свой пресет">
+                                    <i class="fa-solid fa-floppy-disk"></i> Сохранить как…
+                                </button>
+                                <button class="loom-icon-btn loom-preset-delete" data-kind="persona" title="Удалить выбранный пресет">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                                <div class="loom-preset-row loom-format-tools">
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-format-add" data-kind="persona"
+                                        title="Добавить пункт в конец списка">
+                                        <i class="fa-solid fa-plus"></i> Пункт
+                                    </button>
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-export" data-kind="persona"
+                                        title="Скачать файлом пункты, что сейчас в списке. Режим и название записаны в файл">
+                                        <i class="fa-solid fa-file-export"></i> Экспорт
+                                    </button>
+                                    <label class="loom-btn loom-btn-ghost loom-btn-small loom-file-btn"
+                                        title="Загрузить пресет из файла — он появится в списке (в режим, записанный в файле)">
+                                        <i class="fa-solid fa-file-import"></i> Импорт
+                                        <input type="file" class="loom-preset-import" data-kind="persona" accept="application/json,.json" multiple>
+                                    </label>
+                                </div>
+                                <div id="loom-format-persona" class="loom-format-list"></div>
+                            </div>
+                        </details>
+
+                        <details class="loom-format-block" data-details-key="fmt-lorebook">
+                            <summary>
+                                <span class="loom-format-title">Пункты записи лорбука</span>
+                                <span class="loom-format-count" data-kind="lorebook"></span>
+                            </summary>
+                            <div class="loom-format-body">
+                                <div class="loom-preset-row">
+                                <select class="loom-preset-select" data-kind="lorebook"></select>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-save" data-kind="lorebook"
+                                    title="Сохранить текущие пункты как свой пресет">
+                                    <i class="fa-solid fa-floppy-disk"></i> Сохранить как…
+                                </button>
+                                <button class="loom-icon-btn loom-preset-delete" data-kind="lorebook" title="Удалить выбранный пресет">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                                <div class="loom-preset-row loom-format-tools">
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-format-add" data-kind="lorebook"
+                                        title="Добавить пункт в конец списка">
+                                        <i class="fa-solid fa-plus"></i> Пункт
+                                    </button>
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-export" data-kind="lorebook"
+                                        title="Скачать файлом пункты, что сейчас в списке. Режим и название записаны в файл">
+                                        <i class="fa-solid fa-file-export"></i> Экспорт
+                                    </button>
+                                    <label class="loom-btn loom-btn-ghost loom-btn-small loom-file-btn"
+                                        title="Загрузить пресет из файла — он появится в списке (в режим, записанный в файле)">
+                                        <i class="fa-solid fa-file-import"></i> Импорт
+                                        <input type="file" class="loom-preset-import" data-kind="lorebook" accept="application/json,.json" multiple>
+                                    </label>
+                                </div>
+                                <div id="loom-format-lorebook" class="loom-format-list"></div>
+                            </div>
+                        </details>
+
+                        <details class="loom-format-block loom-plan-block" data-details-key="fmt-prompt-keys">
+                            <summary><span class="loom-format-title">Промпт ключей лорбука</span></summary>
+                            <div class="loom-format-body">
+                                <span class="loom-hint">&#123;&#123;KEYWORDS&#125;&#125; — ключи записи, &#123;&#123;EN_DECL&#125;&#125; — латиница. Формат ответа (JSON) не менять.</span>
+                                <textarea id="loom-prompt-keys" rows="14"></textarea>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-prompt-reset" data-setting="prompt-keys"
+                                    title="Вернуть исходный текст этого промпта">
+                                    <i class="fa-solid fa-rotate-left"></i> Вернуть по умолчанию
+                                </button>
+                            </div>
+                        </details>
+
+                        <details class="loom-format-block loom-plan-block" data-details-key="fmt-prompt-plot">
+                            <summary><span class="loom-format-title">Промпт сюжета: составление шагов</span></summary>
+                            <div class="loom-format-body">
+                                <span class="loom-hint">Как писать шаги, условия, подпункты и цели.</span>
+                                <textarea id="loom-prompt-plot" rows="14"></textarea>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-prompt-reset" data-setting="prompt-plot"
+                                    title="Вернуть исходный текст этого промпта">
+                                    <i class="fa-solid fa-rotate-left"></i> Вернуть по умолчанию
+                                </button>
+                            </div>
+                        </details>
+
+                        <details class="loom-format-block loom-plan-block" data-details-key="fmt-prompt-plot-pacing">
+                            <summary><span class="loom-format-title">Промпт сюжета: напоминание в чате</span></summary>
+                            <div class="loom-format-body">
+                                <span class="loom-hint">Уходит в чат вместе с шагом. Сюда — про темп.</span>
+                                <textarea id="loom-prompt-plot-pacing" rows="14"></textarea>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-prompt-reset" data-setting="prompt-plot-pacing"
+                                    title="Вернуть исходный текст этого промпта">
+                                    <i class="fa-solid fa-rotate-left"></i> Вернуть по умолчанию
+                                </button>
+                            </div>
+                        </details>
+
+                        <details class="loom-format-block" data-details-key="fmt-prompt">
+                            <summary>
+                                <span class="loom-format-title">Пункты системного промпта</span>
+                                <span class="loom-format-count" data-kind="prompt"></span>
+                            </summary>
+                            <div class="loom-format-body">
+                                <div class="loom-preset-row">
+                                <select class="loom-preset-select" data-kind="prompt"></select>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-save" data-kind="prompt"
+                                    title="Сохранить текущие пункты как свой пресет">
+                                    <i class="fa-solid fa-floppy-disk"></i> Сохранить как…
+                                </button>
+                                <button class="loom-icon-btn loom-preset-delete" data-kind="prompt" title="Удалить выбранный пресет">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                                <div class="loom-preset-row loom-format-tools">
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-format-add" data-kind="prompt"
+                                        title="Добавить пункт в конец списка">
+                                        <i class="fa-solid fa-plus"></i> Пункт
+                                    </button>
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-export" data-kind="prompt"
+                                        title="Скачать файлом пункты, что сейчас в списке. Режим и название записаны в файл">
+                                        <i class="fa-solid fa-file-export"></i> Экспорт
+                                    </button>
+                                    <label class="loom-btn loom-btn-ghost loom-btn-small loom-file-btn"
+                                        title="Загрузить пресет из файла — он появится в списке (в режим, записанный в файле)">
+                                        <i class="fa-solid fa-file-import"></i> Импорт
+                                        <input type="file" class="loom-preset-import" data-kind="prompt" accept="application/json,.json" multiple>
+                                    </label>
+                                </div>
+                                <div id="loom-format-prompt" class="loom-format-list"></div>
+                            </div>
+                        </details>
+
+                        <details class="loom-format-block" data-details-key="fmt-scenario">
+                            <summary>
+                                <span class="loom-format-title">Пункты полного сценария</span>
+                                <span class="loom-format-count" data-kind="scenario"></span>
+                            </summary>
+                            <div class="loom-format-body">
+                                <div class="loom-preset-row">
+                                <select class="loom-preset-select" data-kind="scenario"></select>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-save" data-kind="scenario"
+                                    title="Сохранить текущие пункты как свой пресет">
+                                    <i class="fa-solid fa-floppy-disk"></i> Сохранить как…
+                                </button>
+                                <button class="loom-icon-btn loom-preset-delete" data-kind="scenario" title="Удалить выбранный пресет">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                                <div class="loom-preset-row loom-format-tools">
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-format-add" data-kind="scenario"
+                                        title="Добавить пункт в конец списка">
+                                        <i class="fa-solid fa-plus"></i> Пункт
+                                    </button>
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-export" data-kind="scenario"
+                                        title="Скачать файлом пункты, что сейчас в списке. Режим и название записаны в файл">
+                                        <i class="fa-solid fa-file-export"></i> Экспорт
+                                    </button>
+                                    <label class="loom-btn loom-btn-ghost loom-btn-small loom-file-btn"
+                                        title="Загрузить пресет из файла — он появится в списке (в режим, записанный в файле)">
+                                        <i class="fa-solid fa-file-import"></i> Импорт
+                                        <input type="file" class="loom-preset-import" data-kind="scenario" accept="application/json,.json" multiple>
+                                    </label>
+                                </div>
+                                <div id="loom-format-scenario" class="loom-format-list"></div>
+                            </div>
+                        </details>
+
+                        <details class="loom-format-block" data-details-key="fmt-preset">
+                            <summary>
+                                <span class="loom-format-title">Пункты блока пресета</span>
+                                <span class="loom-format-count" data-kind="preset"></span>
+                            </summary>
+                            <div class="loom-format-body">
+                                <div class="loom-preset-row">
+                                <select class="loom-preset-select" data-kind="preset"></select>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-save" data-kind="preset"
+                                    title="Сохранить текущие пункты как свой пресет">
+                                    <i class="fa-solid fa-floppy-disk"></i> Сохранить как…
+                                </button>
+                                <button class="loom-icon-btn loom-preset-delete" data-kind="preset" title="Удалить выбранный пресет">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                                <div class="loom-preset-row loom-format-tools">
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-format-add" data-kind="preset"
+                                        title="Добавить пункт в конец списка">
+                                        <i class="fa-solid fa-plus"></i> Пункт
+                                    </button>
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-export" data-kind="preset"
+                                        title="Скачать файлом пункты, что сейчас в списке. Режим и название записаны в файл">
+                                        <i class="fa-solid fa-file-export"></i> Экспорт
+                                    </button>
+                                    <label class="loom-btn loom-btn-ghost loom-btn-small loom-file-btn"
+                                        title="Загрузить пресет из файла — он появится в списке (в режим, записанный в файле)">
+                                        <i class="fa-solid fa-file-import"></i> Импорт
+                                        <input type="file" class="loom-preset-import" data-kind="preset" accept="application/json,.json" multiple>
+                                    </label>
+                                </div>
+                                <div id="loom-format-preset" class="loom-format-list"></div>
+                            </div>
+                        </details>
+
+                        <details class="loom-format-block" data-details-key="fmt-analysis">
+                            <summary>
+                                <span class="loom-format-title">Пункты анализа пресета</span>
+                                <span class="loom-format-count" data-kind="analysis"></span>
+                            </summary>
+                            <div class="loom-format-body">
+                                <div class="loom-preset-row">
+                                <select class="loom-preset-select" data-kind="analysis"></select>
+                                <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-save" data-kind="analysis"
+                                    title="Сохранить текущие пункты как свой пресет">
+                                    <i class="fa-solid fa-floppy-disk"></i> Сохранить как…
+                                </button>
+                                <button class="loom-icon-btn loom-preset-delete" data-kind="analysis" title="Удалить выбранный пресет">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                                <div class="loom-preset-row loom-format-tools">
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-format-add" data-kind="analysis"
+                                        title="Добавить пункт в конец списка">
+                                        <i class="fa-solid fa-plus"></i> Пункт
+                                    </button>
+                                    <button class="loom-btn loom-btn-ghost loom-btn-small loom-preset-export" data-kind="analysis"
+                                        title="Скачать файлом пункты, что сейчас в списке. Режим и название записаны в файл">
+                                        <i class="fa-solid fa-file-export"></i> Экспорт
+                                    </button>
+                                    <label class="loom-btn loom-btn-ghost loom-btn-small loom-file-btn"
+                                        title="Загрузить пресет из файла — он появится в списке (в режим, записанный в файле)">
+                                        <i class="fa-solid fa-file-import"></i> Импорт
+                                        <input type="file" class="loom-preset-import" data-kind="analysis" accept="application/json,.json" multiple>
+                                    </label>
+                                </div>
+                                <div id="loom-format-analysis" class="loom-format-list"></div>
+                            </div>
+                        </details>
+
+                        <button id="loom-format-reset" class="loom-btn loom-btn-ghost">
+                            <i class="fa-solid fa-rotate-left"></i> Вернуть форматы по умолчанию
+                        </button>
+                    </section>
+
+                    <section class="loom-tab-page" data-page="plot">
+                        <label class="loom-field">
+                            <span class="loom-label">Как узнавать, что шаг выполнен</span>
+                            <select id="loom-plot-mode">
+                                <option value="inline">В ответе модели — метка раз в N ответов, без доп. запроса</option>
+                                <option value="request">Отдельным запросом раз в N ответов</option>
+                                <option value="manual">Только вручную (кнопками)</option>
+                            </select>
+                            <span class="loom-hint">«В ответе» — метка в конце ответа, LOOM её вырезает.</span>
+                        </label>
+
+                        <label class="loom-field">
+                            <span class="loom-label">N — раз в сколько ответов проверять</span>
+                            <input type="number" id="loom-plot-every" min="1" max="50" step="1">
+                        </label>
+
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-plot-remind">
+                            <span>Напоминать модели текущий шаг в каждом ответе</span>
+                        </label>
+                        <span class="loom-hint">Без этого модель знает о сюжете только в ответах с меткой.</span>
+
+                        <label class="loom-field">
+                            <span class="loom-label">Роль вставки в чат</span>
+                            <select id="loom-plot-role">
+                                <option value="system">System</option>
+                                <option value="user">User</option>
+                            </select>
+                        </label>
+
+                        <label class="loom-field">
+                            <span class="loom-label">Глубина вставки</span>
+                            <input type="number" id="loom-plot-depth" min="0" max="50" step="1">
+                            <span class="loom-hint">0 — в самом конце запроса, 1 — перед последним сообщением и т. д.</span>
+                        </label>
+
+                        <div class="loom-label">Где смотреть сюжет в чате</div>
+                        <span class="loom-hint">Появятся, когда сюжет составлен и привязан к чату.</span>
+
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-plot-float-toggle">
+                            <span>Плавающая кнопка</span>
+                        </label>
+                        <label class="loom-field compact">
+                            <span class="loom-label">Размер кнопки</span>
+                            <select id="loom-plot-float-size">
+                                <option value="compact">Обычная</option>
+                                <option value="big">Большая, с прогрессом</option>
+                                <option value="dot">Только значок</option>
+                            </select>
+                        </label>
+                        <button type="button" class="loom-link-btn" id="loom-plot-float-reset">
+                            <i class="fa-solid fa-rotate-left"></i> Вернуть кнопку и окно на место
+                        </button>
+
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-plot-bar-toggle">
+                            <span>Полоска над строкой ввода</span>
+                        </label>
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-plot-chatbtn-toggle">
+                            <span>Значок слева от строки ввода</span>
+                        </label>
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-plot-wand-toggle">
+                            <span>Пункт в меню волшебной палочки</span>
+                        </label>
+                    </section>
+
+                    <section class="loom-tab-page" data-page="keys">
+                        <label class="loom-check">
+                            <input type="checkbox" id="loom-regex-keys">
+                            <span>Собирать ключи как регулярные выражения</span>
+                        </label>
+                        <span class="loom-hint">Ключи собираются в регулярку со всеми падежами.</span>
+
+                        <label class="loom-field">
+                            <span class="loom-label">Язык ключей</span>
+                            <select id="loom-key-language"></select>
+                            <span class="loom-hint">Язык, на котором вы пишете в чате.</span>
+                        </label>
+
+                        <label class="loom-field">
+                            <span class="loom-label">Флаги регулярного выражения</span>
+                            <input type="text" id="loom-regex-flags" placeholder="i">
+                        </label>
+
+                        <label class="loom-field">
+                            <span class="loom-label">Слов в записи лорбука по умолчанию: <b id="loom-entry-word-count-val">300</b></span>
+                            <input type="range" id="loom-entry-word-count" min="50" max="1000" step="25">
+                        </label>
+
+                        <div class="loom-field">
+                            <span class="loom-label">Проверить ключ</span>
+                            <input type="text" id="loom-key-test-key" placeholder="орден  или  /(?:орден|ордена)/i">
+                            <textarea id="loom-key-test-text" rows="3" placeholder="Текст, на котором проверяем…"></textarea>
+                            <div id="loom-key-test-result" class="loom-key-result"></div>
+                        </div>
+                    </section>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── Импорт: файл (в обход Таверны) и из Таверны ───────────────── -->
+        <div id="loom-import" class="loom-overlay">
+            <div class="loom-overlay-card">
+                <header class="loom-overlay-header">
+                    <span><i class="fa-solid fa-file-import"></i> Импорт</span>
+                    <button id="loom-import-close" class="loom-icon-btn"><i class="fa-solid fa-xmark"></i></button>
+                </header>
+
+                <div class="loom-overlay-body">
+                    <div class="loom-import-section">
+                        <div class="loom-section-head"><span>Из файла — в обход Таверны</span></div>
+                        <span class="loom-hint">Читается в браузере, в Таверну не уходит.</span>
+                        <div class="loom-menu">
+                            <button type="button" class="loom-btn loom-btn-primary loom-menu-toggle">
+                                <i class="fa-solid fa-file-arrow-up"></i> Импорт
+                                <i class="fa-solid fa-caret-down loom-menu-caret"></i>
+                            </button>
+                            <div class="loom-menu-list">
+                                <button type="button" class="loom-menu-item" data-import-file="character"
+                                    title="PNG-карта или .json">
+                                    <i class="fa-solid fa-user-pen"></i> Персонаж
+                                </button>
+                                <button type="button" class="loom-menu-item" data-import-file="lorebook"
+                                    title="Export World Info — {entries: …}">
+                                    <i class="fa-solid fa-book-open"></i> Лорбук
+                                </button>
+                                <button type="button" class="loom-menu-item" data-import-file="persona"
+                                    title="Свой JSON персоны или бэкап всех персон из настроек Таверны">
+                                    <i class="fa-solid fa-user-tag"></i> Персона
+                                </button>
+                                <button type="button" class="loom-menu-item" data-import-file="preset"
+                                    title="Экспорт пресета Chat Completion из Таверны">
+                                    <i class="fa-solid fa-layer-group"></i> Пресет
+                                </button>
+                            </div>
+                        </div>
+                        <input type="file" id="loom-import-file-input" multiple hidden>
+                    </div>
+
+                    <div class="loom-import-section">
+                        <div class="loom-section-head"><span>Персонажи</span></div>
+                        <span class="loom-hint">Оригинал не трогается: делается дубликат.</span>
+                        <div id="loom-import-character-list" class="loom-import-list"></div>
+                    </div>
+
+                    <div class="loom-import-section">
+                        <div class="loom-section-head"><span>Лорбуки</span></div>
+                        <span class="loom-hint">Оригинал сохраняется как «… (бэкап)».</span>
+                        <div id="loom-import-lorebook-list" class="loom-import-list"></div>
+                    </div>
+
+                    <div class="loom-import-section">
+                        <div class="loom-section-head"><span>Персоны</span></div>
+                        <span class="loom-hint">Оригинал сохраняется как «… (бэкап)».</span>
+                        <div id="loom-import-persona-list" class="loom-import-list"></div>
+                    </div>
+
+                    <div class="loom-import-section">
+                        <div class="loom-section-head"><span>Пресеты</span></div>
+                        <span class="loom-hint">Блоки станут черновиком. Выгрузка — в тот же пресет.</span>
+                        <div id="loom-import-preset-list" class="loom-import-list"></div>
+                    </div>
+
+                    <button id="loom-import-go" class="loom-btn loom-btn-primary">
+                        <i class="fa-solid fa-file-import"></i> Импортировать выбранное
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── «Создать» на мобильной раскладке — шторка снизу вместо сетки 3×2 ─── -->
+        <div id="loom-new-sheet" class="loom-sheet-overlay">
+            <div class="loom-sheet">
+                <div class="loom-sheet-handle"></div>
+                <div class="loom-sheet-title">Что создаём?</div>
+                <button type="button" class="loom-sheet-item loom-new" data-mode="character">
+                    <i class="fa-solid fa-user-pen"></i> Персонаж
+                </button>
+                <button type="button" class="loom-sheet-item loom-new" data-mode="persona">
+                    <i class="fa-solid fa-user-tag"></i> Персона
+                </button>
+                <button type="button" class="loom-sheet-item loom-new" data-mode="lorebook">
+                    <i class="fa-solid fa-book-open"></i> Лорбук
+                </button>
+                <button type="button" class="loom-sheet-item loom-new" data-mode="plot">
+                    <i class="fa-solid fa-route"></i> Сюжет
+                </button>
+                <button type="button" class="loom-sheet-item loom-new" data-mode="prompt">
+                    <i class="fa-solid fa-terminal"></i> Промпт
+                </button>
+                <button type="button" class="loom-sheet-item loom-new" data-mode="preset">
+                    <i class="fa-solid fa-layer-group"></i> Пресет
+                </button>
+                <button type="button" id="loom-new-sheet-cancel" class="loom-btn loom-btn-ghost">Отмена</button>
+            </div>
+        </div>
+    </div>
+</div>

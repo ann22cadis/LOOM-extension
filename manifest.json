@@ -1,0 +1,13 @@
+{
+    "display_name": "LOOM",
+    "loading_order": 115,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "ann22cadis",
+    "version": "0.1.0",
+    "description": "Worldbuilding workbench: character cards and lorebooks with per-paragraph feedback",
+    "homePage": "https://github.com/ann22cadis/LOOM-extension",
+    "auto_update": false
+}
