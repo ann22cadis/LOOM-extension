@@ -1468,7 +1468,13 @@ function renderImportBadge(draft) {
     }
     // По флагу, а не по importedAvatar: тот выставляет и экспорт, и созданный в LOOM
     // персонаж после первой выгрузки ошибочно подписывался «импортированным»
-    if (!draft.importedFromTavern) return '';
+    // Созданный в LOOM и уже выгруженный: показываем, КАКОЙ файл обновится — у одноимённых
+    // карточек («Ло.png», «Ло1.png»…) по имени персонажа их не различить
+    if (!draft.importedFromTavern) {
+        return draft.importedAvatar
+            ? `<div class="loom-import-badge"><i class="fa-solid fa-link"></i> В Таверне: ${escapeHtml(draft.importedAvatar)}</div>`
+            : '';
+    }
     const source = draft.importedAvatar || draft.importedWorld;
     if (!source) return '';
     const backup = draft.importBackupAvatar || draft.importBackupWorld;
