@@ -224,10 +224,22 @@ async function updateCharacterInPlace(draft, avatarPng) {
  *   какой тост показать, и в любом случае обязан пере-записать draft.importedAvatar
  *   этим значением: при авто-пересоздании оно отличается от прежнего.
  */
+/**
+ * /api/characters/import отвечает именем файла БЕЗ расширения («Ло»), а в списке Таверны
+ * аватар лежит с ним («Ло.png»). Без приведения привязка не находила персонажа, и каждое
+ * «Обновить в Таверне» заводило нового — дубли. Старые черновики хранят имя без .png.
+ */
+export function characterAvatarFile(name) {
+    const value = String(name || '').trim();
+    if (!value) return '';
+    return /\.(png|webp|jpe?g|gif)$/i.test(value) ? value : `${value}.png`;
+}
+
 export async function exportCharacter(draft, avatarPng = null) {
     const ctx = SillyTavern.getContext();
 
     if (draft.importedAvatar) {
+        draft.importedAvatar = characterAvatarFile(draft.importedAvatar);
         await ctx.getCharacters();
         const stillExists = ctx.characters.some(c => c.avatar === draft.importedAvatar);
         if (stillExists) return { avatar: await updateCharacterInPlace(draft, avatarPng), created: false };
@@ -257,7 +269,7 @@ export async function exportCharacter(draft, avatarPng = null) {
     if (result?.error) throw new Error('Таверна вернула ошибку при импорте карточки.');
 
     await ctx.getCharacters();
-    return { avatar: result.file_name, created: true };
+    return { avatar: characterAvatarFile(result.file_name), created: true };
 }
 
 /**
@@ -274,7 +286,7 @@ function resolveCharacterFilterNames(characterIds) {
     for (const id of characterIds || []) {
         const character = getDraft(id);
         if (!character) continue;
-        if (character.importedAvatar) names.push(character.importedAvatar.replace(/\.[^/.]+$/, ''));
+        if (character.importedAvatar) names.push(characterAvatarFile(character.importedAvatar).replace(/\.[^/.]+$/, ''));
         else missing.push(character.name || 'Без имени');
     }
     return { names, missing };
