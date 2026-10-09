@@ -402,6 +402,34 @@ function ensureWidget() {
 }
 
 /** Ставит панель в точку (в пределах окна); без аргументов — по сохранённой позиции или правый низ. */
+/** Отступы безопасной зоны (вырез, статус-бар, полоска «домой»): кнопку и окно туда не ставим. */
+let insetProbe = null;
+function safeInsets() {
+    if (!insetProbe) {
+        insetProbe = document.createElement('div');
+        insetProbe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;width:0;height:0;'
+            + 'padding-top:var(--tt-inset-top, env(safe-area-inset-top, 0px));'
+            + 'padding-right:var(--tt-inset-right, env(safe-area-inset-right, 0px));'
+            + 'padding-bottom:var(--tt-viewport-bottom-inset, env(safe-area-inset-bottom, 0px));'
+            + 'padding-left:var(--tt-inset-left, env(safe-area-inset-left, 0px));';
+        document.body.appendChild(insetProbe);
+    }
+    const cs = getComputedStyle(insetProbe);
+    return {
+        top: parseFloat(cs.paddingTop) || 0, right: parseFloat(cs.paddingRight) || 0,
+        bottom: parseFloat(cs.paddingBottom) || 0, left: parseFloat(cs.paddingLeft) || 0,
+    };
+}
+
+/** Прижимает прямоугольник к экрану с учётом безопасной зоны. */
+function clampToScreen(left, top, width, height) {
+    const s = safeInsets();
+    return [
+        Math.max(4 + s.left, Math.min(window.innerWidth - width - 4 - s.right, left)),
+        Math.max(4 + s.top, Math.min(window.innerHeight - height - 4 - s.bottom, top)),
+    ];
+}
+
 function placeWidget(x, y) {
     if (!widget) return;
     if (widget.classList.contains('panel-only')) return;
@@ -415,8 +443,7 @@ function placeWidget(x, y) {
         left = window.innerWidth - width - 14;
         top = window.innerHeight - height - 110;
     }
-    left = Math.max(4, Math.min(window.innerWidth - width - 4, left));
-    top = Math.max(4, Math.min(window.innerHeight - height - 4, top));
+    [left, top] = clampToScreen(left, top, width, height);
     widget.style.left = `${left}px`;
     widget.style.top = `${top}px`;
 }
@@ -446,8 +473,7 @@ function placePanel(x, y) {
         left = (window.innerWidth - rect.width) / 2;
         top = (window.innerHeight - rect.height) / 2;
     }
-    left = Math.max(4, Math.min(window.innerWidth - rect.width - 4, left));
-    top = Math.max(4, Math.min(window.innerHeight - rect.height - 4, top));
+    [left, top] = clampToScreen(left, top, rect.width, rect.height);
     panel.style.left = `${Math.round(left)}px`;
     panel.style.top = `${Math.round(top)}px`;
 }
