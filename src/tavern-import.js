@@ -173,7 +173,7 @@ export function importPresetFromTavern(name) {
     const entries = presetEntriesFromRaw(raw, { keepUid: true });
     if (!entries.length) throw new Error(`В пресете «${name}» нет ни одного блока с текстом.`);
 
-    return { name, brief: '', entries };
+    return { name, brief: '', entries, exportTarget: name };
 }
 
 /**
@@ -432,7 +432,7 @@ export async function importWorldFromTavern(name) {
 
     const entries = entriesFromWorldData(data, { keepUid: true });
     if (!entries.length) throw new Error(`В лорбуке «${name}» нет ни одной записи.`);
-    return { name, entries, importedWorld: name, importBackupWorld };
+    return { name, entries, importedWorld: name, importBackupWorld, exportTarget: name };
 }
 
 /** Свободное имя для бэкапа персоны: «Имя (бэкап)», при коллизии — «Имя (бэкап 2)» и т.д. */

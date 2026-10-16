@@ -5209,6 +5209,7 @@ function bindEditorEvents() {
                     if (result.added) parts.push(`добавлено — ${result.added}`);
                     if (result.updated) parts.push(`обновлено — ${result.updated}`);
                     toast('success', `Лорбук «${result.name}»: ${parts.join(', ')}.`);
+                    if (result.retargeted) toast('info', 'Это другой лорбук: записи добавлены новыми, чужие не тронуты.');
                     if (result.filterMissing.length) {
                         toast('info', 'Фильтр по персонажам не поставлен: в Таверне ещё нет — '
                             + `${result.filterMissing.join(', ')}.`);
@@ -5261,6 +5262,7 @@ function bindEditorEvents() {
                     // страницы, и следующий экспорт снова продублировал бы блоки.
                     touchDraft(draft);
                     toast('success', `Пресет «${result.name}»: блоков записано — ${result.written}.`);
+                    if (result.retargeted) toast('info', 'Это другой пресет: блоки добавлены новыми, чужие не тронуты.');
                     toast('info', (result.isActive ? 'Пресет активен — изменения уже видны в Prompt Manager. ' : '')
                         + 'Новые блоки добавлены выключенными, уже существующие обновлены на месте — '
                         + 'их включение и порядок не менялись.');

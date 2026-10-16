@@ -322,10 +322,17 @@ export async function exportLorebook(draft, worldName) {
     const filterMissing = filter.missing;
     const characterFilterNames = filterMissing.length ? [] : filter.names;
 
+    // Номера записей (0, 1, 2…) есть в любом лорбуке. Свои они только в том лорбуке, куда
+    // черновик уже писал или откуда импортирован: экспорт под другим именем (переименовали
+    // черновик) иначе перезаписал бы чужие записи с теми же номерами
+    const sameTarget = draft.exportTarget ? draft.exportTarget === name : null;
+    const sameTitle = (a, b) => String(a || '').trim() === String(b || '').trim();
+
     let written = 0;
     let updated = 0;
     const newLinks = [];      // [запись LOOM, uid новой записи Таверны] — запомним после подтверждённого сохранения
     const writtenUids = [];
+    const writtenEntries = new Set();
     for (const entry of draft.entries) {
         const content = entry.sections
             .map(section => section.blocks.map(b => b.text).join('\n\n'))
@@ -337,7 +344,12 @@ export async function exportLorebook(draft, worldName) {
         // из src/tavern-import.js, — или уже экспортировалась отсюда LOOM'ом раньше, см.
         // присвоение ниже) — обновляем тот же uid на месте, а не создаём рядом дубликат.
         // Без этого повторный экспорт плодил бы копию КАЖДОЙ записи при каждом клике.
-        const existing = entry.importedUid != null && data.entries[entry.importedUid];
+        let existing = entry.importedUid != null && data.entries[entry.importedUid];
+        // Другой лорбук — запись с этим номером чужая. Цель неизвестна (старый черновик) —
+        // своей считаем только запись с тем же названием
+        if (existing && (sameTarget === false || (sameTarget === null && !sameTitle(existing.comment, entry.title)))) {
+            existing = null;
+        }
         const wiEntry = existing || createWorldInfoEntry(name, data);
         if (!wiEntry) throw new Error('Не удалось создать запись лорбука.');
         // uid для следующего экспорта запоминаем ТОЛЬКО после того, как сервер подтвердил
@@ -347,6 +359,7 @@ export async function exportLorebook(draft, worldName) {
         // лорбука — редкий ручной случай, тогда придётся один раз пережить дубликат.
         if (!existing) newLinks.push([entry, wiEntry.uid]); else updated++;
         writtenUids.push(wiEntry.uid);
+        writtenEntries.add(entry);
 
         // finalKeys заполняются на шаге «Собрать ключи»; если туда не заходили,
         // компилируем на лету из простых ключей
@@ -386,13 +399,19 @@ export async function exportLorebook(draft, worldName) {
     // при первой загрузке.
     await verifyLorebookSaved(ctx, name, expectedUids);
     for (const [entry, uid] of newLinks) entry.importedUid = uid;
+    // Записи без текста не писались: их старые номера относятся к прежнему лорбуку
+    if (sameTarget !== true) {
+        for (const entry of draft.entries) if (!writtenEntries.has(entry)) entry.importedUid = null;
+    }
+    const retargeted = sameTarget === false;
+    draft.exportTarget = name;
     await ctx.updateWorldInfoList();
     // Записи на диске уже новые, но открытый редактор World Info рисует то, что прочитал
     // при открытии, — и повторный экспорт выглядит так, будто ничего не произошло.
     // Хуже того, дальнейшая правка в этом устаревшем редакторе сохранила бы поверх нас
     // старый текст. Перечитываем редактор, если открыт именно этот лорбук.
     ctx.reloadWorldInfoEditor?.(name);
-    return { name, written, updated, added: written - updated, filterMissing };
+    return { name, written, updated, added: written - updated, filterMissing, retargeted };
 }
 
 /**
@@ -476,7 +495,13 @@ export function buildOpenAiPreset(draft, name, isActive = false) {
     if (!Array.isArray(preset.prompts)) preset.prompts = [];
     if (!Array.isArray(preset.prompt_order)) preset.prompt_order = [];
 
+    // Идентификаторы импортированных блоков — родные Таверны (main, nsfw, jailbreak…) и есть
+    // почти в каждом пресете. Свои они только в том пресете, откуда импорт или куда уже писали
+    const sameTarget = draft.exportTarget ? draft.exportTarget === name : null;
+    const sameTitle = (a, b) => String(a || '').trim() === String(b || '').trim();
+
     let written = 0;
+    const writtenIds = new Set();
     for (const entry of draft.entries) {
         const content = entry.sections
             .map(section => section.blocks.map(b => b.text).join('\n\n'))
@@ -487,10 +512,17 @@ export function buildOpenAiPreset(draft, name, isActive = false) {
         // importedUid тут — identifier prompts[]-блока в Таверне, тот же принцип,
         // что importedUid записи лорбука: раз выданный, переживает любой следующий
         // экспорт этого же черновика, старый блок обновляется на месте, а не дублируется.
-        entry.importedUid = entry.importedUid || crypto.randomUUID();
-        const identifier = entry.importedUid;
-
-        const index = preset.prompts.findIndex(p => p.identifier === identifier);
+        let identifier = entry.importedUid || crypto.randomUUID();
+        let index = preset.prompts.findIndex(p => p.identifier === identifier);
+        // Чужой пресет (или неизвестная цель и другое название) — блок с этим id не наш:
+        // свой заводим рядом под новым id, а не пишем поверх
+        if (index !== -1 && (sameTarget === false
+            || (sameTarget === null && !sameTitle(preset.prompts[index].name, entry.title)))) {
+            identifier = crypto.randomUUID();
+            index = -1;
+        }
+        entry.importedUid = identifier;
+        writtenIds.add(entry);
         const inChat = Number(entry.injectionPosition) === 1;
         const wanted = {
             name: entry.title || 'Без названия',
@@ -534,7 +566,11 @@ export function buildOpenAiPreset(draft, name, isActive = false) {
         written++;
     }
 
-    return { preset, written };
+    // Блоки без текста не писались: их старые id относятся к прежнему пресету
+    if (sameTarget !== true) {
+        for (const entry of draft.entries) if (!writtenIds.has(entry)) entry.importedUid = null;
+    }
+    return { preset, written, retargeted: sameTarget === false };
 }
 
 /**
@@ -556,11 +592,20 @@ export async function exportPreset(draft, name) {
     if (!manager) throw new Error('В этой сборке Таверны недоступны пресеты Chat Completion.');
 
     const isActive = manager.getSelectedPresetName() === targetName;
-    const { preset, written } = buildOpenAiPreset(draft, targetName, isActive);
-    if (!written) throw new Error('В черновике нет ни одного блока с текстом.');
+    // buildOpenAiPreset проставляет id блоков в черновик сразу; не сохранилось — вернём прежние
+    const before = draft.entries.map(entry => entry.importedUid);
+    const restore = () => draft.entries.forEach((entry, i) => { entry.importedUid = before[i]; });
+    const { preset, written, retargeted } = buildOpenAiPreset(draft, targetName, isActive);
+    if (!written) { restore(); throw new Error('В черновике нет ни одного блока с текстом.'); }
 
-    await writePreset(manager, targetName, preset, isActive);
-    return { name: targetName, written, isActive };
+    try {
+        await writePreset(manager, targetName, preset, isActive);
+    } catch (error) {
+        restore();
+        throw error;
+    }
+    draft.exportTarget = targetName;
+    return { name: targetName, written, isActive, retargeted };
 }
 
 /**

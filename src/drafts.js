@@ -257,6 +257,10 @@ export function listDrafts() {
             if (draft.importedAvatar === undefined) draft.importedAvatar = null;
             if (draft.importBackupAvatar === undefined) draft.importBackupAvatar = null;
             if (draft.importedWorld === undefined) draft.importedWorld = null;
+            // Куда указывают importedUid записей (имя лорбука/пресета). У старых черновиков
+            // известно только для импортированного лорбука; иначе null — «неизвестно»,
+            // и экспорт сверяет запись по названию (см. src/export.js)
+            if (draft.exportTarget === undefined) draft.exportTarget = draft.importedWorld || null;
             if (draft.importBackupWorld === undefined) draft.importBackupWorld = null;
             if (draft.wiPosition === undefined) draft.wiPosition = 0;
             if (draft.wiOrder === undefined) draft.wiOrder = 100;
@@ -421,6 +425,9 @@ export function createDraft(mode) {
         importedAvatar: null,
         importBackupAvatar: null,
         importedWorld: null,
+        // Имя лорбука/пресета Таверны, к которому относятся importedUid записей. Экспорт
+        // в другое имя не трогает записи с теми же номерами там — заводит новые.
+        exportTarget: null,
         importBackupWorld: null,
         // Черновик пришёл ИЗ Таверны (runTavernImport в index.js) — для метки в списке
         // и плашки в редакторе. Отдельный флаг, а не importedAvatar: тот выставляет и
@@ -513,6 +520,7 @@ export function cloneDraftData(source) {
     copy.importBackupAvatar = null;
     copy.importedWorld = null;
     copy.importBackupWorld = null;
+    copy.exportTarget = null;
     copy.importedFromTavern = false;
     copy.importedFromFile = null;
     copy.history = [];
