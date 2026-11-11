@@ -848,9 +848,13 @@
     border-radius: 16px;
     padding: 14px 16px;
     margin-bottom: 14px;
+    /* Рост поля при вводе пересчитывает раскладку только внутри своей записи, а не всех
+       десяти разом (без field-sizing высоту тянет JS) */
+    contain: layout style;
 }
 
 .loom-entry.empty { border-style: dashed; }
+.loom-entry-collapsed { margin-top: 6px; font-size: 12px; color: var(--loom-text-dim); }
 
 .loom-entry-head {
     display: flex;
@@ -974,6 +978,10 @@
     border-color: var(--loom-heart);
     color: var(--loom-heart);
 }
+
+.loom-keys-fold { flex: 1 0 100%; margin-bottom: 0; }
+.loom-keys-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.loom-keys-chips .loom-key { max-width: 100%; }
 
 .loom-key-remove {
     background: none;

@@ -3038,6 +3038,9 @@ function renderLorebook(draft) {
                     <button class="loom-btn loom-btn-ghost" data-action="keys-all" title="Собрать regex-ключи для всех записей одним запросом">
                         <i class="fa-solid fa-key"></i> Собрать ключи
                     </button>
+                    <button class="loom-btn loom-btn-ghost" data-action="entries-toggle" title="Развернуть или свернуть все записи">
+                        <i class="fa-solid fa-angles-down"></i> Свернуть/развернуть
+                    </button>
                     <button class="loom-btn loom-btn-ghost" data-action="keys-clean" title="Убрать пустые, повторные и нерабочие ключи у всех записей">
                         <i class="fa-solid fa-broom"></i> Очистить ключи
                     </button>
@@ -3075,6 +3078,15 @@ function renderLorebook(draft) {
         </div>`;
 }
 
+// Открытость записей лорбука. Тяжёлое тело записи (пункты, абзацы, сердечки) рисуется только
+// у открытой — на десятке записей иначе каждый клик перестраивал тысячи элементов.
+// По умолчанию при 4+ записях все свёрнуты; выбор помнится до перезагрузки страницы.
+const entryOpenState = new Map();
+function isEntryOpen(entry) {
+    if (entryOpenState.has(entry.id)) return entryOpenState.get(entry.id);
+    return (currentDraft()?.entries?.length || 0) <= 3;
+}
+
 function renderEntry(entry, index) {
     const written = !!entry.sections.length;
     const keysHtml = entry.keys.map((key, keyIndex) => {
@@ -3102,9 +3114,69 @@ function renderEntry(entry, index) {
            </details>`
         : '';
 
+    const open = isEntryOpen(entry);
+    const collapsedLine = `<div class="loom-entry-collapsed">${escapeHtml([
+        entry.keys.length ? `ключей: ${entry.keys.length}` : (entry.constant ? 'const' : 'нет ключей'),
+        written ? ratingSummary(entry.sections) || 'не оценено' : 'не написано',
+    ].join(' · '))}</div>`;
+    const bodyHtml = `
+            ${entry.seed ? `<div class="loom-entry-seed">${escapeHtml(entry.seed)}</div>` : ''}
+
+            <div class="loom-row loom-entry-meta">
+                <label class="loom-field compact">
+                    <span class="loom-label">Тип записи</span>
+                    <select class="loom-entry-category">
+                        <option value="">Не задано</option>
+                        ${LOREBOOK_CATEGORIES.map(c => `
+                            <option value="${c.id}" ${c.id === entry.category ? 'selected' : ''}>${escapeHtml(c.label)}</option>`).join('')}
+                    </select>
+                </label>
+                <label class="loom-field compact">
+                    <span class="loom-label">Слов: <b class="loom-entry-wordcount-val">${entry.wordCount}</b></span>
+                    <input type="range" class="loom-entry-wordcount" min="50" max="1000" step="25" value="${entry.wordCount}">
+                </label>
+            </div>
+            <textarea class="loom-entry-note" rows="2"
+                placeholder="Что важно учесть при написании этой записи">${escapeHtml(entry.note)}</textarea>
+
+            ${renderRefs(entry, 'Референсы записи', `refs-entry-${entry.id}`)}
+
+            <div class="loom-keys">
+                ${entry.keys.length > 2
+                    ? `<details class="loom-final-keys loom-keys-fold" data-details-key="keys-${escapeHtml(entry.id)}">
+                           <summary>
+                               <span class="loom-label">Ключи</span>
+                               <span class="loom-final-keys-count">${entry.keys.length}</span>
+                           </summary>
+                           <div class="loom-keys-chips">${keysHtml}</div>
+                       </details>`
+                    : keysHtml}
+                <form class="loom-key-form">
+                    <input type="text" class="loom-key-input" placeholder="+ ключ"
+                        enterkeyhint="done" autocomplete="off" autocapitalize="off" spellcheck="false">
+                    <button type="submit" class="loom-key-add" title="Добавить ключ">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                </form>
+            </div>
+            ${finalKeysHtml}
+
+            ${written
+                ? `<div class="loom-rating-summary">
+                       <span class="loom-rating-text">${escapeHtml(ratingSummary(entry.sections))}</span>
+                       ${renderWeight(entry.id, 'weigh-entry')}
+                   </div>
+                   ${renderSections(entry.sections, `data-scope="entry" data-entry="${index}"`, `entry-${entry.id}-`)}
+                   ${renderAddSectionForm()}`
+                : ''}
+        `;
+
     return `
         <div class="loom-entry ${written ? '' : 'empty'}" data-entry="${index}">
             <div class="loom-entry-head">
+                <button class="loom-icon-btn loom-entry-toggle" title="${open ? 'Свернуть' : 'Развернуть'}">
+                    <i class="fa-solid ${open ? 'fa-chevron-down' : 'fa-chevron-right'}"></i>
+                </button>
                 <input type="text" class="loom-entry-title" value="${escapeHtml(entry.title)}" placeholder="Название записи">
                 <label class="loom-check compact" title="Всегда в контексте, без ключей">
                     <input type="checkbox" class="loom-entry-constant" ${entry.constant ? 'checked' : ''}>
@@ -3132,47 +3204,7 @@ function renderEntry(entry, index) {
                 </div>
             </div>
 
-            ${entry.seed ? `<div class="loom-entry-seed">${escapeHtml(entry.seed)}</div>` : ''}
-
-            <div class="loom-row loom-entry-meta">
-                <label class="loom-field compact">
-                    <span class="loom-label">Тип записи</span>
-                    <select class="loom-entry-category">
-                        <option value="">Не задано</option>
-                        ${LOREBOOK_CATEGORIES.map(c => `
-                            <option value="${c.id}" ${c.id === entry.category ? 'selected' : ''}>${escapeHtml(c.label)}</option>`).join('')}
-                    </select>
-                </label>
-                <label class="loom-field compact">
-                    <span class="loom-label">Слов: <b class="loom-entry-wordcount-val">${entry.wordCount}</b></span>
-                    <input type="range" class="loom-entry-wordcount" min="50" max="1000" step="25" value="${entry.wordCount}">
-                </label>
-            </div>
-            <textarea class="loom-entry-note" rows="2"
-                placeholder="Что важно учесть при написании этой записи">${escapeHtml(entry.note)}</textarea>
-
-            ${renderRefs(entry, 'Референсы записи', `refs-entry-${entry.id}`)}
-
-            <div class="loom-keys">
-                ${keysHtml}
-                <form class="loom-key-form">
-                    <input type="text" class="loom-key-input" placeholder="+ ключ"
-                        enterkeyhint="done" autocomplete="off" autocapitalize="off" spellcheck="false">
-                    <button type="submit" class="loom-key-add" title="Добавить ключ">
-                        <i class="fa-solid fa-plus"></i>
-                    </button>
-                </form>
-            </div>
-            ${finalKeysHtml}
-
-            ${written
-                ? `<div class="loom-rating-summary">
-                       <span class="loom-rating-text">${escapeHtml(ratingSummary(entry.sections))}</span>
-                       ${renderWeight(entry.id, 'weigh-entry')}
-                   </div>
-                   ${renderSections(entry.sections, `data-scope="entry" data-entry="${index}"`, `entry-${entry.id}-`)}
-                   ${renderAddSectionForm()}`
-                : ''}
+            ${open ? bodyHtml : collapsedLine}
         </div>`;
 }
 
@@ -4914,6 +4946,12 @@ function bindEditorEvents() {
         if (!draft) return;
         const action = $(this).data('action');
 
+        // Действие над записью (написать, переписать…) раскрывает её — иначе результата не видно
+        if ($(this).closest('.loom-entry').length && !String(action).includes('delete')) {
+            const target = resolveEntry($(this));
+            if (target && !isEntryOpen(target.entry)) entryOpenState.set(target.entry.id, true);
+        }
+
         switch (action) {
             case 'close-draft': {
                 dropIfEmpty(state.draftId);
@@ -5284,6 +5322,11 @@ function bindEditorEvents() {
             case 'rewrite-all': return rewriteAllEntries(draft);
             case 'keys-all': return buildAllEntryKeys(draft);
             case 'keys-clean': return cleanAllEntryKeys(draft);
+            case 'entries-toggle': {
+                const open = !draft.entries.every(isEntryOpen);
+                for (const entry of draft.entries) entryOpenState.set(entry.id, open);
+                return renderMain();
+            }
             case 'keys-check': return checkAllEntryKeys(draft);
             case 'weigh-draft': {
                 const text = ENTRY_BASED_MODES.has(draft.mode)
@@ -5486,6 +5529,17 @@ function bindEditorEvents() {
         // фокуса пришлось бы после каждого ключа снова тыкать в поле и поднимать
         // экранную клавиатуру.
         $main.find(`.loom-entry[data-entry="${found.index}"] .loom-key-input`).trigger('focus');
+    });
+
+    $main.on('click', '.loom-entry-toggle', function () {
+        const found = resolveEntry($(this));
+        if (!found) return;
+        entryOpenState.set(found.entry.id, !isEntryOpen(found.entry));
+        const $entry = $(this).closest('.loom-entry');
+        $entry.replaceWith(renderEntry(found.entry, found.index));
+        const $new = $main.find(`.loom-entry[data-entry="${found.index}"]`);
+        growAll($new);
+        hydrateThumbs($new);
     });
 
     // Свой пункт записи: пустой, пишется потом кнопкой «переписать только этот пункт»
