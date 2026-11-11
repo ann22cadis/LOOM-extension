@@ -3739,3 +3739,22 @@ body.loom-folders-circles .loom-folder-inline-empty { grid-column: 1 / -1; }
 .loom-mem-card h4 .loom-icon-btn { width: 30px; height: 30px; display: grid; place-content: center; }
 .loom-mem-item .loom-icon-btn { width: 32px; height: 32px; display: grid; place-content: center; }
 .loom-mem-top .loom-icon-btn { width: 36px; height: 36px; display: grid; place-content: center; font-size: 18px; }
+
+/* Панели кнопок на телефоне: сетка в две равные колонки вместо «кто сколько растянулся».
+   Нечётная последняя кнопка — на всю ширину, пара «Откатить/Вперёд» — тоже. */
+@media (max-width: 768px) {
+    .loom-editor-actions:not(.loom-review-actions) {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+    .loom-editor-actions:not(.loom-review-actions) > .loom-btn,
+    .loom-editor-actions:not(.loom-review-actions) > .loom-menu { min-width: 0; width: 100%; }
+    .loom-editor-actions:not(.loom-review-actions) > .loom-btn-group { grid-column: 1 / -1; }
+    .loom-editor-actions:not(.loom-review-actions) > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+    /* В карточке записи пара истории — две маленькие иконки, не отдельная строка */
+    .loom-entry-actions .loom-btn-group { flex: 0 0 auto; }
+    .loom-entry-actions .loom-btn-group .loom-btn { flex: 0 0 auto; }
+}
+@media (max-width: 768px) {
+    .loom-editor-actions:not(.loom-review-actions) > .loom-weight { grid-column: 1 / -1; justify-self: end; }
+}

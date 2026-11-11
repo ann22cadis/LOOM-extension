@@ -91,12 +91,30 @@ function memory() {
     for (const f of m.facts) f.cat ||= 'events';
     for (const e of m.entries) { e.type ||= 'other'; e.keys ||= []; }
     if (m.analyzedUpTo === undefined) m.analyzedUpTo = -1;
+    // Сообщения удалили — «прочитано до» не может указывать дальше конца чата
+    const last = (ctx().chat?.length || 0) - 1;
+    if (m.analyzedUpTo > last) m.analyzedUpTo = last;
     return m;
 }
 
+/*
+ * Сохранение. saveMetadataDebounced Таверны при смене чата ОТМЕНЯЕТСЯ (clearChat →
+ * cancelDebouncedMetadataSave): правка за секунду до переключения терялась бы. Поэтому
+ * помним, в каком чате есть несохранённое, и при закрытии окна сохраняем сразу —
+ * сменить чат, не закрыв окно на весь экран, нельзя.
+ */
+let unsavedChat = null;
+
 function commit() {
+    unsavedChat = ctx().chatId;
     ctx().saveMetadataDebounced?.();
     syncPrompt();
+}
+
+function flush() {
+    const c = ctx();
+    if (unsavedChat && unsavedChat === c.chatId) c.saveMetadata?.().catch?.(e => console.warn(LOG, 'Память чата не сохранилась', e));
+    unsavedChat = null;
 }
 
 /** Сводка и включённые факты — одним блоком в промпт чата. */
@@ -312,9 +330,12 @@ async function ensureChatWorld() {
     const names = new Set(world_names || []);
     let name = base;
     for (let n = 2; names.has(name); n++) name = `${base} ${n}`;
+    const chatId = c.chatId;
     await c.saveWorldInfo(name, { entries: {} }, true);
-    c.chatMetadata[WORLD_KEY] = name;
-    await c.saveMetadata();
+    // Пока создавали лорбук, чат могли сменить — привязывать к чужому чату нельзя
+    if (ctx().chatId !== chatId) throw new Error('Чат сменился — выгрузка отменена.');
+    ctx().chatMetadata[WORLD_KEY] = name;
+    await ctx().saveMetadata();
     await c.updateWorldInfoList?.();
     $('.chat_lorebook_button').addClass('world_set');
     return name;
@@ -375,6 +396,7 @@ async function exportToWorld() {
         });
     }
     await c.saveWorldInfo(name, data, true);
+    if (memory() !== m) throw new Error('Чат сменился во время выгрузки — записи в лорбуке есть, но память чата их не запомнила.');
     for (const [item, uid] of links) { item.uid = uid; item.dirty = false; }
     m.world = name;
     commit();
@@ -702,6 +724,7 @@ export function openMemory() {
 }
 
 export function closeMemory() {
+    if (overlay) flush();
     overlay?.remove();
     overlay = null;
 }
@@ -731,7 +754,12 @@ export function initMemory() {
     if (inited) return;
     inited = true;
     const { eventSource, eventTypes } = ctx();
-    eventSource.on(eventTypes.CHAT_CHANGED, () => { closeMemory(); renderMenuItem(); syncPrompt(); });
+    eventSource.on(eventTypes.CHAT_CHANGED, () => {
+        unsavedChat = null; // никогда не сохраняем в НОВЫЙ чат то, что правили в старом
+        closeMemory();
+        renderMenuItem();
+        syncPrompt();
+    });
     document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && overlay && !busy) closeMemory(); });
     renderMenuItem();
     syncPrompt();

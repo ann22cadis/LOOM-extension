@@ -520,6 +520,53 @@ export function characterRewritePrompt(draft, itemIds = null, extraNote = '') {
 }
 
 /** Черновик в виде обычного текста — для показа модели её же предыдущей работы. */
+/**
+ * OOC-переписывание карточки ЦЕЛИКОМ: пользователь словами говорит, что поменять
+ * («сделай её старше и злее», «перепиши от третьего лица»), и переписываются все пункты
+ * разом, включая сцену и импортированные поля вне формата (extraSections).
+ * @param {object} draft
+ * @param {string} request указание пользователя
+ * @param {string[]} itemIds пункты формата, которые есть в карточке
+ * @param {Array<{id: string, label: string}>} extraSections пункты вне формата
+ */
+export function characterOocPrompt(draft, request, itemIds, extraSections = []) {
+    const items = [
+        ...activeFormat('character').filter(item => itemIds.includes(item.id)),
+        ...extraSections.map(sec => ({
+            id: sec.id,
+            hint: `The rewritten text of "${sec.label}" - keep what the instruction does not touch.`,
+        })),
+    ];
+    const digest = feedbackDigest(draft.sections);
+    return withPlan([
+        'TASK: rewrite the WHOLE character card following the user\'s OOC instruction below.',
+        'The instruction has top priority: apply it everywhere it matters, consistently across all items. '
+            + 'Everything it does not touch keeps its substance, facts and tone.',
+        '',
+        `OOC INSTRUCTION FROM THE USER:\n${String(request || '').trim()}`,
+        '',
+        `CHARACTER NAME: ${draft.name || '(invent one)'}`,
+        '',
+        'ORIGINAL IDEA:',
+        String(draft.brief || '').trim() || '(none given)',
+        '',
+        'CURRENT VERSION OF THE CARD:',
+        renderDraftPlain(draft),
+        '',
+        digest ? `${digest}\n(The OOC instruction outranks these ratings where they conflict.)` : '',
+        '',
+        sceneWritingGuide(items),
+        '',
+        imageNote(draft.images),
+        '',
+        commonRules(),
+        '',
+        'Return: { "name": "character name", "card": { … } }, where card contains ALL these items:',
+        '',
+        formatContract('character', items),
+    ], 'character');
+}
+
 export function renderDraftPlain(draft) {
     return draft.sections
         .map(section => `## ${section.id}\n` + section.blocks.map(b => b.text).join('\n\n'))

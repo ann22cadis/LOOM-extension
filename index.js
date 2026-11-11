@@ -16,6 +16,7 @@
  *   src/tavern-import.js — импорт персонажей и лорбуков ИЗ Таверны, с резервной копией
  */
 
+import { user_avatar } from '../../../personas.js';
 import {
     getSettings, saveSettings, saveSettingsImmediate, CARD_TARGETS, DEFAULT_CHARACTER_FORMAT, DEFAULT_LOREBOOK_FORMAT,
     DEFAULT_PERSONA_FORMAT, BUILTIN_CHARACTER_PRESETS, BUILTIN_LOREBOOK_PRESETS, BUILTIN_PERSONA_PRESETS, activeFormat,
@@ -25,7 +26,7 @@ import {
 } from './src/settings.js';
 import { callAI, parseJsonLoose, listConnectionProfiles, setAbortSignal } from './src/api.js';
 import {
-    characterSystemPrompt, characterCreatePrompt, characterRewritePrompt, alternateGreetingPrompt, alternateGreetingsBatchPrompt,
+    characterSystemPrompt, characterCreatePrompt, characterRewritePrompt, characterOocPrompt, alternateGreetingPrompt, alternateGreetingsBatchPrompt,
     lorebookSystemPrompt, lorebookPlanPrompt, lorebookEntryPrompt, lorebookEntriesBatchPrompt, lorebookRewritePrompt,
     personaSystemPrompt, personaCreatePrompt, personaRewritePrompt,
     promptSystemPrompt, promptCreatePrompt, promptRewritePrompt,
@@ -1626,8 +1627,8 @@ function renderCharacter(draft) {
                     </button>
                     ${renderHistoryPair(draft)}
                     ${renderMenu({
-                        icon: draft.importedAvatar ? 'fa-rotate' : 'fa-file-export',
-                        label: 'Экспорт',
+                        icon: 'fa-ellipsis',
+                        label: 'Ещё',
                         items: [
                             { action: 'export-character',
                                 icon: draft.importedAvatar ? 'fa-rotate' : 'fa-file-import',
@@ -1638,11 +1639,9 @@ function renderCharacter(draft) {
                             { action: 'download-png', icon: 'fa-file-image', label: 'Скачать PNG',
                                 title: 'Карточка картинкой, как в Таверне' },
                             { action: 'download-character', icon: 'fa-download', label: 'Скачать JSON' },
+                            { action: 'translate-character', icon: 'fa-language', label: 'На английский' },
                         ],
-                    })}
-                    <button class="loom-btn loom-btn-ghost" data-action="translate-character" title="Перевести карточку на английский">
-                        <i class="fa-solid fa-language"></i> На английский
-                    </button>` : ''}
+                    })}` : ''}
                 </div>
             </div>
 
@@ -1659,6 +1658,16 @@ function renderCharacter(draft) {
                 ${renderRefs(draft, 'Референсы: внешность, детали, вещи', 'refs-draft')}
                 ${renderAvatar(draft)}
             </details>
+
+            ${hasCard ? `
+            <details class="loom-brief" data-details-key="ooc">
+                <summary>OOC: переписать карточку целиком</summary>
+                <textarea class="loom-ooc-text" rows="3"
+                    placeholder="Что поменять во всей карточке. Например: сделай её на 10 лет старше и холоднее; убери магию">${escapeHtml(draft.oocRequest || '')}</textarea>
+                <button class="loom-btn loom-btn-accent" data-action="ooc-rewrite">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Переписать всё по OOC
+                </button>
+            </details>` : ''}
 
             ${hasCard ? `<div class="loom-rating-summary">
                 <div class="loom-rating-left">
@@ -1790,6 +1799,43 @@ async function rewriteCharacter(draft) {
         renderDraftList();
         renderMain();
         toast('success', `Версия ${draft.iteration} готова. Переписано пунктов: ${rewritten.length} из ${cardSections.length}.`);
+    });
+}
+
+/** OOC: вся карточка (со сценой и импортированными полями) по словесному указанию. */
+async function oocRewriteCharacter(draft) {
+    const request = String(draft.oocRequest || '').trim();
+    if (!request) return toast('info', 'Напишите в поле OOC, что поменять.');
+    if (!draft.sections.length) return toast('info', 'Карточка ещё пустая — сначала «Сгенерировать».');
+
+    const knownIds = new Set(activeFormat('character').map(item => item.id));
+    const itemIds = draft.sections.filter(sec => knownIds.has(sec.id)).map(sec => sec.id);
+    const extra = draft.sections.filter(sec => !knownIds.has(sec.id));
+
+    await withBusy('Переписываю карточку по OOC…', async () => {
+        const response = await callAI(characterOocPrompt(draft, request, itemIds, extra), {
+            system: characterSystemPrompt(),
+            images: await loadImages(draft.images),
+        });
+        const parsed = parseJsonLoose(response, 'card');
+        if (!parsed?.card) throw new Error(parseFailure(response, 'объект карточки'));
+
+        const known = itemIds.length ? sectionsFromResponse(parsed.card, 'character', itemIds) : [];
+        const free = freeSectionsFromResponse(parsed.card, extra);
+        if (!known.length && !free.changed) throw new Error('В ответе модели не нашлось ни одного пункта.');
+
+        pushHistory(draft);
+        const fresh = new Map([...known, ...free.sections].map(sec => [sec.id, sec]));
+        // Пункт, который модель пропустила, остаётся прежним; порядок — как был
+        const next = draft.sections.map(sec => fresh.get(sec.id) || sec);
+        draft.sections = carryOverRatings(draft.history.at(-1).sections, next);
+        if (parsed.name) draft.name = String(parsed.name).trim() || draft.name;
+        draft.iteration = (draft.iteration || 0) + 1;
+        touchDraft(draft);
+
+        renderDraftList();
+        renderMain();
+        toast('success', `Версия ${draft.iteration}: переписано пунктов ${known.length + (free.changed ? free.sections.length : 0)} из ${draft.sections.length}.`);
     });
 }
 
@@ -2010,18 +2056,16 @@ function renderPersona(draft) {
                     </button>
                     ${renderHistoryPair(draft)}
                     ${renderMenu({
-                        icon: draft.importedAvatar ? 'fa-rotate' : 'fa-file-export',
-                        label: 'Экспорт',
+                        icon: 'fa-ellipsis',
+                        label: 'Ещё',
                         items: [
                             { action: 'export-persona',
                                 icon: draft.importedAvatar ? 'fa-rotate' : 'fa-file-import',
                                 label: draft.importedAvatar ? 'Обновить в Таверне' : 'В Таверну' },
                             { action: 'download-persona', icon: 'fa-download', label: 'Скачать JSON' },
+                            { action: 'translate-persona', icon: 'fa-language', label: 'На английский' },
                         ],
-                    })}
-                    <button class="loom-btn loom-btn-ghost" data-action="translate-persona" title="Перевести на английский">
-                        <i class="fa-solid fa-language"></i> На английский
-                    </button>` : ''}
+                    })}` : ''}
                 </div>
             </div>
 
@@ -2180,13 +2224,15 @@ function renderPrompt(draft) {
                         title="Скопировать готовый текст — вставить в Prompt Manager или System Prompt Таверны">
                         <i class="fa-solid fa-copy"></i> Копировать
                     </button>
-                    ${renderHistoryPair(draft)}
-                    <button class="loom-btn loom-btn-ghost" data-action="translate-prompt" title="Перевести на английский">
-                        <i class="fa-solid fa-language"></i> На английский
-                    </button>
-                    <button class="loom-btn loom-btn-ghost" data-action="download-prompt" title="Скачать текстовым файлом">
-                        <i class="fa-solid fa-download"></i> TXT
-                    </button>` : ''}
+                    ${renderMenu({
+                        icon: 'fa-ellipsis',
+                        label: 'Ещё',
+                        items: [
+                            { action: 'translate-prompt', icon: 'fa-language', label: 'На английский' },
+                            { action: 'download-prompt', icon: 'fa-download', label: 'Скачать TXT' },
+                        ],
+                    })}
+                    ${renderHistoryPair(draft)}` : ''}
                 </div>
             </div>
 
@@ -2345,13 +2391,15 @@ function renderScenario(draft) {
                     <button class="loom-btn loom-btn-accent" data-action="copy-scenario" title="Скопировать готовый текст">
                         <i class="fa-solid fa-copy"></i> Копировать
                     </button>
-                    ${renderHistoryPair(draft)}
-                    <button class="loom-btn loom-btn-ghost" data-action="translate-scenario" title="Перевести на английский">
-                        <i class="fa-solid fa-language"></i> На английский
-                    </button>
-                    <button class="loom-btn loom-btn-ghost" data-action="download-scenario" title="Скачать текстовым файлом">
-                        <i class="fa-solid fa-download"></i> TXT
-                    </button>` : ''}
+                    ${renderMenu({
+                        icon: 'fa-ellipsis',
+                        label: 'Ещё',
+                        items: [
+                            { action: 'translate-scenario', icon: 'fa-language', label: 'На английский' },
+                            { action: 'download-scenario', icon: 'fa-download', label: 'Скачать TXT' },
+                        ],
+                    })}
+                    ${renderHistoryPair(draft)}` : ''}
                 </div>
             </div>
 
@@ -3047,6 +3095,8 @@ function renderLorebook(draft) {
                             { action: 'keys-check', icon: 'fa-clipboard-check', label: 'Проверить ключи', title: 'Показать проблемы с ключами, ничего не меняя' },
                             { action: 'entries-toggle', icon: 'fa-angles-down', label: 'Свернуть/развернуть записи' },
                             { action: 'translate-all', icon: 'fa-language', label: 'На английский', title: 'Перевести все написанные записи; ключи останутся русскими' },
+                            { action: 'bind-character', icon: 'fa-user-tag', label: 'Привязать к персонажу', title: 'Сделать основным лорбуком карточки в Таверне' },
+                            { action: 'bind-persona', icon: 'fa-id-badge', label: 'Привязать к персоне', title: 'Лорбук персоны в Таверне' },
                         ],
                     })}
                     ${renderWeight(draft.id, 'weigh-draft')}` : ''}
@@ -3189,10 +3239,10 @@ function renderEntry(entry, index) {
                     ${written || entry.history?.length || entry.future?.length ? renderEntryHistoryPair(entry) : ''}
                     ${written ? `
                     <button class="loom-btn loom-btn-small loom-btn-ghost" data-action="entry-translate" title="Перевести запись на английский">
-                        <i class="fa-solid fa-language"></i> EN
+                        <i class="fa-solid fa-language"></i><span class="loom-label-long"> EN</span>
                     </button>` : ''}
                     <button class="loom-btn loom-btn-small loom-btn-ghost" data-action="entry-keys" title="Собрать regex-ключи">
-                        <i class="fa-solid fa-key"></i> Ключи
+                        <i class="fa-solid fa-key"></i><span class="loom-label-long"> Ключи</span>
                     </button>
                     <button class="loom-icon-btn" data-action="entry-delete" title="Удалить запись">
                         <i class="fa-solid fa-trash"></i>
@@ -3609,6 +3659,67 @@ async function checkAllEntryKeys(draft) {
 }
 
 /**
+ * Привязка выгруженного лорбука к персонажу (основной лорбук карточки, extensions.world)
+ * или к персоне (persona_descriptions[аватар].lorebook) — то же, что кнопка с глобусом
+ * в Таверне. Лорбук должен уже быть в Таверне: привязываем по имени последней выгрузки.
+ */
+async function bindLorebookTo(draft, kind) {
+    const ctx = SillyTavern.getContext();
+    const world = draft.exportTarget || draft.importedWorld;
+    if (!world) return toast('info', 'Сначала выгрузите лорбук в Таверну — привязывается он по имени.');
+
+    const linkedAvatar = id => getDraft(id)?.importedAvatar || null;
+    let options;
+    let selected;
+    if (kind === 'character') {
+        options = (ctx.characters || []).map((c, i) => ({
+            value: String(i), label: c.name, now: c.data?.extensions?.world || '',
+        }));
+        const wanted = new Set((draft.characterIds || []).map(linkedAvatar).filter(Boolean));
+        selected = options.find(o => wanted.has(ctx.characters[Number(o.value)]?.avatar))?.value;
+    } else {
+        const personas = ctx.powerUserSettings?.personas || {};
+        const info = ctx.powerUserSettings?.persona_descriptions || {};
+        options = Object.entries(personas).map(([avatar, name]) => ({ value: avatar, label: name, now: info[avatar]?.lorebook || '' }));
+        selected = linkedAvatar(draft.personaId) || options[0]?.value;
+    }
+    if (!options.length) return toast('info', kind === 'character' ? 'В Таверне нет персонажей.' : 'В Таверне нет персон.');
+
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+        <h3>Привязать «${escapeHtml(world)}» ${kind === 'character' ? 'к персонажу' : 'к персоне'}</h3>
+        <select class="text_pole loom-bind-target">
+            ${options.map(o => `<option value="${escapeHtml(o.value)}" ${o.value === selected ? 'selected' : ''}>
+                ${escapeHtml(o.label)}${o.now ? ` — сейчас: ${escapeHtml(o.now)}` : ''}</option>`).join('')}
+        </select>
+        <p class="loom-hint">Заменит ${kind === 'character' ? 'основной лорбук карточки' : 'лорбук персоны'}, если он был.</p>`;
+    const popup = new ctx.Popup(wrap, ctx.POPUP_TYPE.CONFIRM, '', { okButton: 'Привязать', cancelButton: 'Отмена' });
+    if (await popup.show() !== ctx.POPUP_RESULT.AFFIRMATIVE) return;
+    const value = wrap.querySelector('.loom-bind-target').value;
+
+    await withBusy('Привязываю лорбук…', async () => {
+        if (kind === 'character') {
+            const character = ctx.characters[Number(value)];
+            if (!character) throw new Error('Персонаж не найден.');
+            await ctx.writeExtensionField(Number(value), 'world', world);
+            if (character.data?.extensions?.world !== world) throw new Error('Таверна не приняла привязку.');
+            if (String(ctx.characterId) === value) $('#set_character_world, #world_button').addClass('world_set');
+            toast('success', `«${world}» — основной лорбук «${character.name}».`);
+        } else {
+            const info = ctx.powerUserSettings.persona_descriptions;
+            info[value] = { ...(info[value] || {}), lorebook: world };
+            ctx.saveSettingsDebounced();
+            // Персона сейчас выбрана — Таверна читает её лорбук из отдельного поля, не из описаний
+            if (user_avatar === value) {
+                ctx.powerUserSettings.persona_description_lorebook = world;
+                $('#persona_lore_button').addClass('world_set');
+            }
+            toast('success', `«${world}» привязан к персоне «${ctx.powerUserSettings.personas[value]}».`);
+        }
+    });
+}
+
+/**
  * Ключи для ВСЕХ записей лорбука одним запросом.
  *
  * Кнопка «Ключи» у записи дёргает модель по одной записи — при плане на восемь
@@ -3924,9 +4035,13 @@ function renderPreset(draft) {
                         title="Добавит блоки в пресет Таверны — выключенными, включаете нужные сами">
                         <i class="fa-solid fa-file-import"></i> В пресет Таверны
                     </button>
-                    <button class="loom-btn loom-btn-ghost" data-action="translate-all" title="Перевести все написанные блоки">
-                        <i class="fa-solid fa-language"></i> На английский
-                    </button>
+                    ${renderMenu({
+                        icon: 'fa-ellipsis',
+                        label: 'Ещё',
+                        items: [
+                            { action: 'translate-all', icon: 'fa-language', label: 'На английский', title: 'Перевести все написанные блоки' },
+                        ],
+                    })}
                     ${renderWeight(draft.id, 'weigh-draft')}` : ''}
                 </div>
             </div>
@@ -4493,6 +4608,13 @@ function bindEditorEvents() {
         if (draft) { draft.brief = $(this).val(); touchDraft(draft); }
     });
 
+    $main.on('input', '.loom-ooc-text', function () {
+        const draft = currentDraft();
+        if (!draft) return;
+        draft.oocRequest = $(this).val();
+        touchDraft(draft);
+    });
+
     $main.on('input', '.loom-notes-text', function () {
         const draft = currentDraft();
         if (draft) { draft.notes = $(this).val(); touchDraft(draft); }
@@ -4958,6 +5080,7 @@ function bindEditorEvents() {
             }
             case 'generate': return generateCharacter(draft);
             case 'rewrite': return rewriteCharacter(draft);
+            case 'ooc-rewrite': return oocRewriteCharacter(draft);
             case 'generate-scene': return generateSceneItem(draft, $(this).data('sceneItem'));
             case 'rewrite-scene': return rewriteSceneItem(draft, $(this).data('sceneItem'));
             case 'add-altgreet': {
@@ -5324,6 +5447,8 @@ function bindEditorEvents() {
                 return renderMain();
             }
             case 'keys-check': return checkAllEntryKeys(draft);
+            case 'bind-character': return bindLorebookTo(draft, 'character');
+            case 'bind-persona': return bindLorebookTo(draft, 'persona');
             case 'weigh-draft': {
                 const text = ENTRY_BASED_MODES.has(draft.mode)
                     ? draft.entries.map(entryContentText).filter(Boolean).join('\n\n')
