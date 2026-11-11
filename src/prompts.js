@@ -1413,12 +1413,23 @@ export function lorebookEntriesBatchPrompt(input) {
  * @param {object} entry
  * @param {string[]} [itemIds] см. characterRewritePrompt — та же логика частичного
  *   переписывания, только для пунктов записи лорбука.
+ * @param {object[]} [extraSections] секции записи вне формата (импортированный текст),
+ *   которые тоже переписываем
  */
-export function lorebookRewritePrompt(draft, entry, itemIds = null) {
+export function lorebookRewritePrompt(draft, entry, itemIds = null, extraSections = []) {
     const digest = feedbackDigest(entry.sections);
     const allItems = activeFormat('lorebook');
-    const items = itemIds ? allItems.filter(item => itemIds.includes(item.id)) : allItems;
-    const hasSkipped = items.length < allItems.length;
+    const formatItems = itemIds ? allItems.filter(item => itemIds.includes(item.id)) : allItems;
+    // Пункты, которых нет в формате (текст, импортированный из лорбука Таверны): пишутся
+    // тем же ключом, что у них в записи, без требований формата
+    const extraItems = extraSections.map(s => ({
+        id: s.id,
+        hint: s.blocks.length
+            ? `The rewritten text of "${s.label}": keep every fact and the existing structure, only apply the ratings and notes.`
+            : `A NEW item titled "${s.label}", not written yet: write it from scratch so it fits the rest of the entry and does not repeat it.`,
+    }));
+    const items = [...formatItems, ...extraItems];
+    const hasSkipped = formatItems.length < allItems.length;
     const parts = [
         'TASK: rewrite a lorebook entry according to the user\'s ratings.',
         '',
@@ -1682,11 +1693,18 @@ export function presetEntriesBatchPrompt(input) {
 }
 
 /** Переписывание одного блока пресета с учётом оценок — та же механика, что у lorebookRewritePrompt. */
-export function presetRewritePrompt(draft, entry, itemIds = null) {
+export function presetRewritePrompt(draft, entry, itemIds = null, extraSections = []) {
     const digest = feedbackDigest(entry.sections);
     const allItems = activeFormat('preset');
-    const items = itemIds ? allItems.filter(item => itemIds.includes(item.id)) : allItems;
-    const hasSkipped = items.length < allItems.length;
+    const formatItems = itemIds ? allItems.filter(item => itemIds.includes(item.id)) : allItems;
+    const extraItems = extraSections.map(s => ({
+        id: s.id,
+        hint: s.blocks.length
+            ? `The rewritten text of "${s.label}": keep every instruction and the existing structure, only apply the ratings and notes.`
+            : `A NEW item titled "${s.label}", not written yet: write it from scratch so it fits the rest of the block and does not repeat it.`,
+    }));
+    const items = [...formatItems, ...extraItems];
+    const hasSkipped = formatItems.length < allItems.length;
     const siblings = draft.entries.filter(e => e !== entry).map(e => e.title);
 
     const parts = [

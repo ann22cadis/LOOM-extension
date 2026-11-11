@@ -418,3 +418,82 @@ export function testKey(key, sampleText) {
     const global = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
     return [...sampleText.matchAll(global)].map(m => m[0]);
 }
+
+/**
+ * Очистка ключей записи: пробелы по краям и внутри, пустые, повторы (без учёта регистра у
+ * обычных слов), регулярки, которые не компилируются (Таверна искала бы их буквально).
+ * Если список ключей изменился, собранные ключи сбрасываются — они относились к старому.
+ * @returns {{removed: number, invalid: string[], changed: boolean}}
+ */
+export function cleanEntryKeys(entry) {
+    const invalid = [];
+    const tidy = list => {
+        const seen = new Set();
+        const out = [];
+        for (const raw of list || []) {
+            const key = isRegexKey(raw) ? String(raw).trim() : String(raw ?? '').trim().replace(/\s+/g, ' ');
+            if (!key) continue;
+            if (!validateKey(key).ok) { invalid.push(key); continue; }
+            const id = isRegexKey(key) ? key : key.toLowerCase();
+            if (seen.has(id)) continue;
+            seen.add(id);
+            out.push(key);
+        }
+        return out;
+    };
+    const before = Array.isArray(entry.keys) ? entry.keys : [];
+    const keys = tidy(before);
+    const changed = keys.length !== before.length || keys.some((k, i) => k !== before[i]);
+    entry.keys = keys;
+    if (changed) entry.finalKeys = [];
+    else if (Array.isArray(entry.finalKeys)) entry.finalKeys = tidy(entry.finalKeys);
+    return { removed: before.length - keys.length, invalid, changed };
+}
+
+/**
+ * Проверка ключей записей. Ничего не меняет, только собирает замечания.
+ * @param {Array<{title: string, keys: string[], finalKeys?: string[], constant?: boolean}>} entries
+ * @param {(entry: object) => string} getText текст записи (для поиска совпадений)
+ * @returns {Array<{title: string, problems: string[], notes: string[]}>} только записи с замечаниями
+ */
+export function auditKeys(entries, getText) {
+    const owners = new Map();
+    for (const entry of entries) {
+        for (const key of entry.keys || []) {
+            if (isRegexKey(key)) continue;
+            const id = String(key).trim().toLowerCase();
+            if (!owners.has(id)) owners.set(id, new Set());
+            owners.get(id).add(entry.title);
+        }
+    }
+
+    const report = [];
+    for (const entry of entries) {
+        const problems = [];
+        const notes = [];
+        const keys = entry.keys || [];
+        const text = String(getText(entry) || '');
+
+        if (!keys.length && !entry.constant) problems.push('нет ключей и не const — запись никогда не сработает');
+        for (const key of keys) {
+            const check = validateKey(key);
+            if (!check.ok) { problems.push(`«${key}»: ${check.error}`); continue; }
+            if (!isRegexKey(key) && key.trim().length < 3) problems.push(`«${key}»: слишком короткий, будет срабатывать на чужие слова`);
+            const others = [...(owners.get(String(key).trim().toLowerCase()) || [])].filter(t => t !== entry.title);
+            if (!isRegexKey(key) && others.length) notes.push(`«${key}» есть и у: ${others.join(', ')}`);
+        }
+        for (const key of entry.finalKeys || []) {
+            const check = validateKey(key);
+            if (!check.ok) problems.push(`собранный ключ «${key.slice(0, 40)}»: ${check.error}`);
+        }
+        if (keys.length && !(entry.finalKeys || []).length && getSettings().lorebook_regex_keys) {
+            notes.push('ключи ещё не собраны — при экспорте соберутся локально, без модели');
+        }
+        if (text.trim() && keys.length && !entry.constant) {
+            const missing = keys.filter(key => validateKey(key).ok && !testKey(key, text).length);
+            if (missing.length === keys.length) notes.push('ни один ключ не встречается в тексте самой записи');
+        }
+        if (problems.length || notes.length) report.push({ title: entry.title, problems, notes });
+    }
+    return report;
+}

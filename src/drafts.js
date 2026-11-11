@@ -45,6 +45,24 @@ export function sectionsFromResponse(card, kind, itemIds = null) {
 }
 
 /**
+ * Переписанные секции вне формата (импортированный текст): ключ в ответе = id секции.
+ * Если модель пункт пропустила, остаётся прежний текст — стирать его нельзя.
+ * @returns {{sections: Section[], changed: boolean}}
+ */
+export function freeSectionsFromResponse(card, oldSections) {
+    let changed = false;
+    const sections = oldSections.map(old => {
+        const raw = card?.[old.id];
+        const paragraphs = Array.isArray(raw) ? raw : String(raw || '').split(/\n{2,}/);
+        const blocks = paragraphs.map(makeBlock).filter(b => b.text);
+        if (!blocks.length) return old;
+        changed = true;
+        return { id: old.id, label: old.label, blocks };
+    });
+    return { sections, changed };
+}
+
+/**
  * Делит секции на «одобренные» (все абзацы набрали ≥ keepThreshold и без комментариев —
  * менять нечего) и «на переписывание» (всё остальное, включая пустые и никогда не
  * писавшиеся пункты). Одобренные в запрос к модели не попадают вовсе: пересказывать то,

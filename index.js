@@ -43,13 +43,13 @@ import {
     pushEntriesHistory, popEntriesHistory, redoEntriesHistory,
     pushStepsHistory, popStepsHistory, redoStepsHistory,
     averageRating, countBlocks, applyTranslation, uid,
-    splitApprovedSections, mergeSections,
+    splitApprovedSections, mergeSections, freeSectionsFromResponse,
 } from './src/drafts.js';
 import {
     buildFormatPresetFile, parseFormatPresetFile, formatPresetFileName, uniquePresetName,
     FORMAT_KIND_LABELS,
 } from './src/format-presets.js';
-import { buildKeyRegexes, compileKeys, validateKey, testKey, isRegexKey, repairIndeclinableKeys } from './src/keys.js';
+import { buildKeyRegexes, compileKeys, validateKey, testKey, isRegexKey, repairIndeclinableKeys, cleanEntryKeys, auditKeys } from './src/keys.js';
 import {
     exportCharacter, exportLorebook, exportPersona, exportPreset, buildCharacterCard, downloadJson,
     buildSectionsText, copyToClipboard, downloadText, listPresetBlocks, putPresetBlock,
@@ -1257,6 +1257,17 @@ function renderSections(sections, pathPrefix, keyPrefix = '') {
             ${section.blocks.map((block, blockIndex) =>
                 renderBlock(block, `${pathPrefix} data-section-id="${escapeHtml(section.id)}"`, blockIndex)).join('')}
         </details>`).join('');
+}
+
+/** Форма «+ пункт»: свой пункт записи, которого нет в формате (его можно написать отдельно). */
+function renderAddSectionForm() {
+    return `<form class="loom-key-form loom-section-add-form">
+        <input type="text" class="loom-key-input loom-section-add-input" placeholder="+ свой пункт (название)"
+            enterkeyhint="done" autocomplete="off" spellcheck="false">
+        <button type="submit" class="loom-key-add" title="Добавить пункт — потом «переписать только этот пункт» напишет его">
+            <i class="fa-solid fa-plus"></i>
+        </button>
+    </form>`;
 }
 
 /** Сколько абзацев оценено — чтобы было видно, готов ли черновик к переписыванию. */
@@ -3027,6 +3038,12 @@ function renderLorebook(draft) {
                     <button class="loom-btn loom-btn-ghost" data-action="keys-all" title="Собрать regex-ключи для всех записей одним запросом">
                         <i class="fa-solid fa-key"></i> Собрать ключи
                     </button>
+                    <button class="loom-btn loom-btn-ghost" data-action="keys-clean" title="Убрать пустые, повторные и нерабочие ключи у всех записей">
+                        <i class="fa-solid fa-broom"></i> Очистить ключи
+                    </button>
+                    <button class="loom-btn loom-btn-ghost" data-action="keys-check" title="Показать проблемы с ключами, ничего не меняя">
+                        <i class="fa-solid fa-clipboard-check"></i> Проверить ключи
+                    </button>
                     <button class="loom-btn loom-btn-ghost" data-action="export-lorebook">
                         <i class="fa-solid fa-file-import"></i> В лорбук Таверны
                     </button>
@@ -3153,7 +3170,8 @@ function renderEntry(entry, index) {
                        <span class="loom-rating-text">${escapeHtml(ratingSummary(entry.sections))}</span>
                        ${renderWeight(entry.id, 'weigh-entry')}
                    </div>
-                   ${renderSections(entry.sections, `data-scope="entry" data-entry="${index}"`, `entry-${entry.id}-`)}`
+                   ${renderSections(entry.sections, `data-scope="entry" data-entry="${index}"`, `entry-${entry.id}-`)}
+                   ${renderAddSectionForm()}`
                 : ''}
         </div>`;
 }
@@ -3362,10 +3380,13 @@ async function rewriteEntryCore(draft, entry) {
     const passthrough = entry.sections.filter(s => !knownIds.has(s.id));
 
     const { approved, toRewrite } = splitApprovedSections(knownSections, keepThreshold);
-    if (!toRewrite.length) return null;
+    // Импортированный текст тоже переписываем по оценкам: иначе у импортированной записи
+    // кнопка «с оценками» вечно отвечала бы «всё одобрено», хоть там и стоят двойки
+    const free = splitApprovedSections(passthrough, keepThreshold);
+    if (!toRewrite.length && !free.toRewrite.length) return null;
 
     const itemIds = toRewrite.map(s => s.id);
-    const response = await callAI(lorebookRewritePrompt(draft, entry, itemIds), {
+    const response = await callAI(lorebookRewritePrompt(draft, entry, itemIds, free.toRewrite), {
         system: lorebookSystemPrompt(),
         // Запись видит и свои референсы, и общие по миру
         images: await loadImages([...(entry.images || []), ...(draft.images || [])]),
@@ -3374,14 +3395,15 @@ async function rewriteEntryCore(draft, entry) {
     const parsed = parseJsonLoose(response, 'entry');
     if (!parsed?.entry) throw new Error(parseFailure(response, 'объект записи'));
 
-    const rewritten = sectionsFromResponse(parsed.entry, 'lorebook', itemIds);
-    if (!rewritten.length) throw new Error('В ответе нет ни одного пункта формата.');
+    const rewritten = itemIds.length ? sectionsFromResponse(parsed.entry, 'lorebook', itemIds) : [];
+    const free2 = freeSectionsFromResponse(parsed.entry, free.toRewrite);
+    if (!rewritten.length && !free2.changed) throw new Error('В ответе нет ни одного пункта формата.');
 
     pushHistory(entry);
-    const rated = carryOverRatings(entry.history.at(-1).sections, rewritten);
-    entry.sections = mergeSections('lorebook', [...approved, ...passthrough], rated);
+    const rated = carryOverRatings(entry.history.at(-1).sections, [...rewritten, ...free2.sections]);
+    entry.sections = mergeSections('lorebook', [...approved, ...free.approved], rated);
     touchDraft(draft);
-    return rewritten.length;
+    return rewritten.length + (free2.changed ? free2.sections.length : 0);
 }
 
 async function rewriteEntry(draft, entry) {
@@ -3440,10 +3462,48 @@ async function rewriteAllEntries(draft) {
     });
 }
 
+/**
+ * Пункт записи вне формата — свой («+ пункт») или импортированный текст: пишем только его.
+ * Остальные пункты уходят в запрос как контекст и не меняются.
+ */
+async function regenerateFreeEntrySection(draft, entry, sectionId, kind) {
+    const section = entry.sections.find(s => s.id === sectionId);
+    if (!section) return;
+    const isPreset = kind === 'preset';
+
+    await withBusy(`Пишу «${section.label}»…`, async () => {
+        const options = isPreset
+            ? { system: presetSystemPrompt(), maxTokens: entryMaxTokens(entry.wordCount) }
+            : {
+                system: lorebookSystemPrompt(),
+                images: await loadImages([...(entry.images || []), ...(draft.images || [])]),
+                maxTokens: entryMaxTokens(entry.wordCount),
+            };
+        const prompt = isPreset
+            ? presetRewritePrompt(draft, entry, [], [section])
+            : lorebookRewritePrompt(draft, entry, [], [section]);
+        const response = await callAI(prompt, options);
+        const parsed = parseJsonLoose(response, 'entry');
+        if (!parsed?.entry) throw new Error(parseFailure(response, isPreset ? 'объект блока' : 'объект записи'));
+
+        const result = freeSectionsFromResponse(parsed.entry, [section]);
+        if (!result.changed) throw new Error(`Модель не вернула пункт «${section.label}».`);
+
+        pushHistory(entry);
+        const rated = carryOverRatings(entry.history.at(-1).sections, result.sections);
+        // Порядок сохраняем: пункт остаётся на своём месте
+        entry.sections = entry.sections.map(s => s.id === sectionId ? rated[0] : s);
+        touchDraft(draft);
+
+        renderMain();
+        toast('success', `«${section.label}» готов.`);
+    });
+}
+
 /** Точечная перегенерация одного пункта записи — та же кнопка, что и у карточки. */
 async function regenerateEntrySection(draft, entry, sectionId) {
     const item = activeFormat('lorebook').find(i => i.id === sectionId);
-    if (!item) return;
+    if (!item) return regenerateFreeEntrySection(draft, entry, sectionId, 'lorebook');
 
     await withBusy(`Переписываю «${item.label}»…`, async () => {
         const response = await callAI(lorebookRewritePrompt(draft, entry, [sectionId]), {
@@ -3482,6 +3542,42 @@ async function buildEntryKeys(draft, entry) {
         renderMain();
         toast('success', `Ключи собраны: ${entry.finalKeys.length}.`);
     });
+}
+
+/** Очистка ключей всех записей (без модели): пустые, повторы, нерабочие регулярки. */
+function cleanAllEntryKeys(draft) {
+    let removed = 0;
+    let changedEntries = 0;
+    const invalid = [];
+    for (const entry of draft.entries) {
+        const result = cleanEntryKeys(entry);
+        removed += result.removed;
+        if (result.changed) changedEntries++;
+        invalid.push(...result.invalid.map(k => `«${k}» (${entry.title})`));
+    }
+    if (!changedEntries) return toast('info', 'Ключи уже чистые — убирать нечего.');
+    touchDraft(draft);
+    renderMain();
+    toast('success', `Убрано ключей: ${removed}, записей затронуто: ${changedEntries}. `
+        + (invalid.length ? `Нерабочие регулярки удалены: ${invalid.join(', ')}. ` : '')
+        + 'Для затронутых записей нажмите «Собрать ключи».');
+}
+
+/** Проверка ключей: окно с замечаниями по записям, ничего не меняет. */
+async function checkAllEntryKeys(draft) {
+    const report = auditKeys(draft.entries, entryContentText);
+    const ctx = SillyTavern.getContext();
+    const wrap = document.createElement('div');
+    wrap.className = 'loom-keys-report';
+    wrap.innerHTML = report.length
+        ? `<h3>Проверка ключей</h3>${report.map(r => `
+            <div style="margin:10px 0;text-align:left">
+                <b>${escapeHtml(r.title)}</b>
+                ${r.problems.map(p => `<div>⚠ ${escapeHtml(p)}</div>`).join('')}
+                ${r.notes.map(n => `<div style="opacity:.75">• ${escapeHtml(n)}</div>`).join('')}
+            </div>`).join('')}`
+        : '<h3>Проверка ключей</h3><p>Замечаний нет: ключи записей рабочие.</p>';
+    await new ctx.Popup(wrap, ctx.POPUP_TYPE.TEXT, '', { okButton: 'Закрыть', wide: true, allowVerticalScrolling: true }).show();
 }
 
 /**
@@ -3663,24 +3759,26 @@ async function rewritePresetEntryCore(draft, entry) {
     const passthrough = entry.sections.filter(s => !knownIds.has(s.id));
 
     const { approved, toRewrite } = splitApprovedSections(knownSections, keepThreshold);
-    if (!toRewrite.length) return null;
+    const free = splitApprovedSections(passthrough, keepThreshold);
+    if (!toRewrite.length && !free.toRewrite.length) return null;
 
     const itemIds = toRewrite.map(s => s.id);
-    const response = await callAI(presetRewritePrompt(draft, entry, itemIds), {
+    const response = await callAI(presetRewritePrompt(draft, entry, itemIds, free.toRewrite), {
         system: presetSystemPrompt(),
         maxTokens: entryMaxTokens(entry.wordCount),
     });
     const parsed = parseJsonLoose(response, 'entry');
     if (!parsed?.entry) throw new Error(parseFailure(response, 'объект блока'));
 
-    const rewritten = sectionsFromResponse(parsed.entry, 'preset', itemIds);
-    if (!rewritten.length) throw new Error('В ответе нет ни одного пункта формата.');
+    const rewritten = itemIds.length ? sectionsFromResponse(parsed.entry, 'preset', itemIds) : [];
+    const free2 = freeSectionsFromResponse(parsed.entry, free.toRewrite);
+    if (!rewritten.length && !free2.changed) throw new Error('В ответе нет ни одного пункта формата.');
 
     pushHistory(entry);
-    const rated = carryOverRatings(entry.history.at(-1).sections, rewritten);
-    entry.sections = mergeSections('preset', [...approved, ...passthrough], rated);
+    const rated = carryOverRatings(entry.history.at(-1).sections, [...rewritten, ...free2.sections]);
+    entry.sections = mergeSections('preset', [...approved, ...free.approved], rated);
     touchDraft(draft);
-    return rewritten.length;
+    return rewritten.length + (free2.changed ? free2.sections.length : 0);
 }
 
 async function rewritePresetEntry(draft, entry) {
@@ -3734,7 +3832,7 @@ async function rewriteAllPresetEntries(draft) {
 /** Точечная перегенерация одного пункта блока — см. regenerateEntrySection (лорбук). */
 async function regeneratePresetEntrySection(draft, entry, sectionId) {
     const item = activeFormat('preset').find(i => i.id === sectionId);
-    if (!item) return;
+    if (!item) return regenerateFreeEntrySection(draft, entry, sectionId, 'preset');
 
     await withBusy(`Переписываю «${item.label}»…`, async () => {
         const response = await callAI(presetRewritePrompt(draft, entry, [sectionId]), {
@@ -3893,7 +3991,8 @@ function renderPresetEntry(entry, index) {
                        <span class="loom-rating-text">${escapeHtml(ratingSummary(entry.sections))}</span>
                        ${renderWeight(entry.id, 'weigh-entry')}
                    </div>
-                   ${renderSections(entry.sections, `data-scope="entry" data-entry="${index}"`, `entry-${entry.id}-`)}`
+                   ${renderSections(entry.sections, `data-scope="entry" data-entry="${index}"`, `entry-${entry.id}-`)}
+                   ${renderAddSectionForm()}`
                 : ''}
         </div>`;
 }
@@ -5184,6 +5283,8 @@ function bindEditorEvents() {
             case 'write-whole': return writeWholeLorebook(draft);
             case 'rewrite-all': return rewriteAllEntries(draft);
             case 'keys-all': return buildAllEntryKeys(draft);
+            case 'keys-clean': return cleanAllEntryKeys(draft);
+            case 'keys-check': return checkAllEntryKeys(draft);
             case 'weigh-draft': {
                 const text = ENTRY_BASED_MODES.has(draft.mode)
                     ? draft.entries.map(entryContentText).filter(Boolean).join('\n\n')
@@ -5385,6 +5486,22 @@ function bindEditorEvents() {
         // фокуса пришлось бы после каждого ключа снова тыкать в поле и поднимать
         // экранную клавиатуру.
         $main.find(`.loom-entry[data-entry="${found.index}"] .loom-key-input`).trigger('focus');
+    });
+
+    // Свой пункт записи: пустой, пишется потом кнопкой «переписать только этот пункт»
+    $main.on('submit', '.loom-section-add-form', function (event) {
+        event.preventDefault();
+        const found = resolveEntry($(this));
+        if (!found) return;
+        const label = String($(this).find('.loom-section-add-input').val()).trim();
+        if (!label) return;
+        if (found.entry.sections.some(sec => sec.label.trim().toLowerCase() === label.toLowerCase())) {
+            return toast('info', `Пункт «${label}» у этой записи уже есть.`);
+        }
+        found.entry.sections.push({ id: `custom-${uid()}`, label, blocks: [] });
+        touchDraft(found.draft);
+        renderMain();
+        toast('info', `Пункт «${label}» добавлен. Нажмите ⟳ рядом с ним, чтобы написать только его.`);
     });
 
     $main.on('click', '.loom-key-remove', function () {
