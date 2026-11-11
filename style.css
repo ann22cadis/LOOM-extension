@@ -3620,8 +3620,9 @@ body.loom-folders-circles .loom-folder-inline-empty { grid-column: 1 / -1; }
     .loom-block-prompt-tools { margin-left: auto; }
 }
 
-/* ─── Память чата (окно Таверны, вне #loom-backdrop — переменные свои) ──────── */
-.loom-mem-wrap {
+/* ─── Память чата: во весь экран, отступы под вырез и TauriTavern (как #loom-backdrop) ── */
+#loom-memory {
+    --loom-bg: var(--SmartThemeBlurTintColor, #16171c);
     --loom-surface: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 4%, transparent);
     --loom-surface-hover: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 8%, transparent);
     --loom-surface-strong: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 12%, transparent);
@@ -3630,20 +3631,68 @@ body.loom-folders-circles .loom-folder-inline-empty { grid-column: 1 / -1; }
     --loom-text-dim: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 55%, transparent);
     --loom-accent: var(--SmartThemeQuoteColor, #c9a86a);
     --loom-radius: 12px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    z-index: 99999;
+    box-sizing: border-box;
+    padding:
+        var(--tt-inset-top, env(safe-area-inset-top, 0px))
+        var(--tt-inset-right, env(safe-area-inset-right, 0px))
+        var(--tt-viewport-bottom-inset, env(safe-area-inset-bottom, 0px))
+        var(--tt-inset-left, env(safe-area-inset-left, 0px));
+    background: var(--loom-bg);
+    color: var(--loom-text);
+    font-size: 14px;
     text-align: left;
 }
-.loom-mem h3 { margin: 0 0 10px; }
-.loom-mem-box { border: 1px solid var(--loom-border); border-radius: var(--loom-radius); padding: 10px; margin-bottom: 10px; }
-.loom-mem-line, .loom-mem-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
-.loom-mem-head .loom-icon-btn { margin-left: auto; }
-.loom-mem-count { font-size: 12px; color: var(--loom-text-dim); }
-.loom-mem-hint, .loom-mem-status, .loom-mem-empty { font-size: 12px; color: var(--loom-text-dim); }
-.loom-mem-status:empty { display: none; }
-.loom-mem-range { flex: 1 1 200px; margin: 0; }
-.loom-mem-depth { width: 60px; margin: 0; }
-.loom-mem-row { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 6px; }
-.loom-mem-row .loom-mem-text { flex: 1; margin: 0; resize: vertical; }
+.loom-mem-panel { display: flex; flex-direction: column; height: 100%; max-width: 900px; margin: 0 auto; }
+.loom-mem-panel.busy .loom-btn { pointer-events: none; opacity: 0.55; }
+.loom-mem-top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--loom-border); }
+.loom-mem-top > i { color: var(--loom-accent); font-size: 18px; }
+.loom-mem-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.loom-mem-titles b { font-size: 16px; }
+.loom-mem-titles span { font-size: 12px; color: var(--loom-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loom-mem-tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--loom-border); }
+.loom-mem-tabs button {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 6px 2px; border: none; border-radius: 10px; background: none;
+    color: var(--loom-text-dim); font-size: 11px; cursor: pointer;
+}
+.loom-mem-tabs button i { font-size: 15px; }
+.loom-mem-tabs button.on { background: var(--loom-surface-strong); color: var(--loom-accent); }
+.loom-mem-status { padding: 8px 16px; font-size: 12px; color: var(--loom-text-dim); background: var(--loom-surface); }
+.loom-mem-body { flex: 1; overflow-y: auto; padding: 12px 16px 24px; -webkit-overflow-scrolling: touch; }
+.loom-mem-card { background: var(--loom-surface); border: 1px solid var(--loom-border); border-radius: var(--loom-radius); padding: 12px; margin-bottom: 12px; }
+.loom-mem-card h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 14px; }
+.loom-mem-card h4 i { color: var(--loom-accent); }
+.loom-mem-card h4 .loom-icon-btn { margin-left: auto; }
+.loom-mem-card .text_pole { width: 100%; box-sizing: border-box; margin: 0 0 8px; }
+.loom-mem-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.loom-mem-row .text_pole { flex: 1 1 140px; width: auto; margin: 0; }
+.loom-mem-sticky { position: sticky; top: -12px; z-index: 1; padding: 8px 0; background: var(--loom-bg); }
+.loom-mem-wide { width: 100%; justify-content: center; }
+.loom-mem-dim, .loom-mem-empty, .loom-mem-count { font-size: 12px; color: var(--loom-text-dim); }
+.loom-mem-empty { padding: 16px 0; text-align: center; }
+.loom-mem-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.loom-mem-chip {
+    display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px;
+    border: 1px solid var(--loom-border); border-radius: 999px; background: none;
+    color: var(--loom-text); font-size: 12px; cursor: pointer;
+}
+.loom-mem-chip.on, .loom-mem-chip:has(input:checked) { border-color: var(--loom-accent); color: var(--loom-accent); }
+.loom-mem-chip input { accent-color: var(--loom-accent); margin: 0; }
+.loom-mem-switch { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; cursor: pointer; }
+.loom-mem-switch input { accent-color: var(--loom-accent); margin: 0; }
+.loom-mem-card .loom-mem-depth { width: 80px; }
+.loom-mem-item { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; }
+.loom-mem-item .text_pole { flex: 1; margin: 0; resize: vertical; field-sizing: content; min-height: 2.2em; }
 .loom-mem-on { margin-top: 10px; accent-color: var(--loom-accent); }
-.loom-mem-entry { border-top: 1px solid var(--loom-border); padding-top: 8px; margin-bottom: 8px; }
-.loom-mem-entry .loom-mem-title { flex: 1 1 160px; margin: 0; font-weight: 600; }
-.loom-mem-entry .loom-mem-keys, .loom-mem-entry .loom-mem-content { width: 100%; margin: 0 0 6px; box-sizing: border-box; }
+.loom-mem-entry-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.loom-mem-entry-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loom-mem-entry.open .loom-mem-entry-head { margin-bottom: 10px; }
+.loom-mem-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--loom-surface-strong); color: var(--loom-accent); white-space: nowrap; }
+.loom-mem-preview { margin-top: 6px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
