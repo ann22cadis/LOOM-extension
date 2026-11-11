@@ -3619,3 +3619,31 @@ body.loom-folders-circles .loom-folder-inline-empty { grid-column: 1 / -1; }
     .loom-block-prompt-head > span:first-child { flex: 1 1 100%; }
     .loom-block-prompt-tools { margin-left: auto; }
 }
+
+/* ─── Память чата (окно Таверны, вне #loom-backdrop — переменные свои) ──────── */
+.loom-mem-wrap {
+    --loom-surface: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 4%, transparent);
+    --loom-surface-hover: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 8%, transparent);
+    --loom-surface-strong: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 12%, transparent);
+    --loom-border: var(--SmartThemeBorderColor, color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 12%, transparent));
+    --loom-text: var(--SmartThemeBodyColor, #e8e8ea);
+    --loom-text-dim: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 55%, transparent);
+    --loom-accent: var(--SmartThemeQuoteColor, #c9a86a);
+    --loom-radius: 12px;
+    text-align: left;
+}
+.loom-mem h3 { margin: 0 0 10px; }
+.loom-mem-box { border: 1px solid var(--loom-border); border-radius: var(--loom-radius); padding: 10px; margin-bottom: 10px; }
+.loom-mem-line, .loom-mem-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.loom-mem-head .loom-icon-btn { margin-left: auto; }
+.loom-mem-count { font-size: 12px; color: var(--loom-text-dim); }
+.loom-mem-hint, .loom-mem-status, .loom-mem-empty { font-size: 12px; color: var(--loom-text-dim); }
+.loom-mem-status:empty { display: none; }
+.loom-mem-range { flex: 1 1 200px; margin: 0; }
+.loom-mem-depth { width: 60px; margin: 0; }
+.loom-mem-row { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 6px; }
+.loom-mem-row .loom-mem-text { flex: 1; margin: 0; resize: vertical; }
+.loom-mem-on { margin-top: 10px; accent-color: var(--loom-accent); }
+.loom-mem-entry { border-top: 1px solid var(--loom-border); padding-top: 8px; margin-bottom: 8px; }
+.loom-mem-entry .loom-mem-title { flex: 1 1 160px; margin: 0; font-weight: 600; }
+.loom-mem-entry .loom-mem-keys, .loom-mem-entry .loom-mem-content { width: 100%; margin: 0 0 6px; box-sizing: border-box; }

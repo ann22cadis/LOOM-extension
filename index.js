@@ -73,6 +73,7 @@ import {
     initPlot, renderWidget, currentPlot, getPlotState, isChatOpen, boundDraftId, bindPlot, unbindPlot,
     setPlotStep, advancePlot, backPlot, plotProgress, plotLeaves, stepRange, chatCast,
 } from './src/plot.js';
+import { initMemory } from './src/memory.js';
 import { applyAppearance, renderThemePicker, bindThemePicker, initCustomSelects } from './src/appearance.js';
 
 const LOG = '[LOOM]';
@@ -3035,24 +3036,19 @@ function renderLorebook(draft) {
                         title="Переписать все написанные записи по оценкам и комментариям">
                         <i class="fa-solid fa-arrows-rotate"></i> Все с оценками
                     </button>
-                    <button class="loom-btn loom-btn-ghost" data-action="keys-all" title="Собрать regex-ключи для всех записей одним запросом">
-                        <i class="fa-solid fa-key"></i> Собрать ключи
-                    </button>
-                    <button class="loom-btn loom-btn-ghost" data-action="entries-toggle" title="Развернуть или свернуть все записи">
-                        <i class="fa-solid fa-angles-down"></i> Свернуть/развернуть
-                    </button>
-                    <button class="loom-btn loom-btn-ghost" data-action="keys-clean" title="Убрать пустые, повторные и нерабочие ключи у всех записей">
-                        <i class="fa-solid fa-broom"></i> Очистить ключи
-                    </button>
-                    <button class="loom-btn loom-btn-ghost" data-action="keys-check" title="Показать проблемы с ключами, ничего не меняя">
-                        <i class="fa-solid fa-clipboard-check"></i> Проверить ключи
-                    </button>
                     <button class="loom-btn loom-btn-ghost" data-action="export-lorebook">
                         <i class="fa-solid fa-file-import"></i> В лорбук Таверны
                     </button>
-                    <button class="loom-btn loom-btn-ghost" data-action="translate-all" title="Перевести все написанные записи; ключи останутся русскими">
-                        <i class="fa-solid fa-language"></i> На английский
-                    </button>
+                    ${renderMenu({
+                        icon: 'fa-ellipsis', label: 'Ещё',
+                        items: [
+                            { action: 'keys-all', icon: 'fa-key', label: 'Собрать ключи', title: 'Собрать regex-ключи для всех записей одним запросом' },
+                            { action: 'keys-clean', icon: 'fa-broom', label: 'Очистить ключи', title: 'Убрать пустые, повторные и нерабочие ключи у всех записей' },
+                            { action: 'keys-check', icon: 'fa-clipboard-check', label: 'Проверить ключи', title: 'Показать проблемы с ключами, ничего не меняя' },
+                            { action: 'entries-toggle', icon: 'fa-angles-down', label: 'Свернуть/развернуть записи' },
+                            { action: 'translate-all', icon: 'fa-language', label: 'На английский', title: 'Перевести все написанные записи; ключи останутся русскими' },
+                        ],
+                    })}
                     ${renderWeight(draft.id, 'weigh-draft')}` : ''}
                 </div>
             </div>
@@ -6430,6 +6426,7 @@ jQuery(async () => {
     initFolderIconObserver();
     initFolderDropdownIntercept();
     initPlot();
+    initMemory();
     bindPlotEvents();
     applyFoldersCssClass(settings.folders_tool_enabled === true);
     applyFolderDropdownCssClass(settings.folders_dropdown_view === true);
