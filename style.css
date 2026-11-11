@@ -3696,3 +3696,46 @@ body.loom-folders-circles .loom-folder-inline-empty { grid-column: 1 / -1; }
 .loom-mem-entry.open .loom-mem-entry-head { margin-bottom: 10px; }
 .loom-mem-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--loom-surface-strong); color: var(--loom-accent); white-space: nowrap; }
 .loom-mem-preview { margin-top: 6px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* Память чата: свои галочки вместо системных квадратов Таверны */
+#loom-memory input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    border: 1.5px solid var(--loom-text-dim);
+    border-radius: 5px;
+    background: transparent;
+    display: inline-grid;
+    place-content: center;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+#loom-memory input[type="checkbox"]::after {
+    content: "";
+    width: 9px;
+    height: 5px;
+    border: 2px solid var(--loom-on-accent, color-mix(in srgb, var(--loom-accent) 28%, #000));
+    border-top: none;
+    border-right: none;
+    transform: translateY(-1px) rotate(-45deg) scale(0);
+    transition: transform 0.12s;
+}
+#loom-memory input[type="checkbox"]:checked { background: var(--loom-accent); border-color: var(--loom-accent); }
+#loom-memory input[type="checkbox"]:checked::after { transform: translateY(-1px) rotate(-45deg) scale(1); }
+/* В чипсах галочка не нужна: включённость видна по рамке и цвету */
+#loom-memory .loom-mem-chip input[type="checkbox"] { display: none; }
+.loom-mem-chip { padding: 6px 12px; }
+.loom-mem-item { align-items: center; }
+.loom-mem-on { margin: 0; }
+
+/* Симметрия кнопок: в ряду — поровну, текст и иконка по центру */
+#loom-memory .loom-btn { justify-content: center; }
+.loom-mem-sticky > .loom-btn { flex: 1 1 0; min-width: 0; }
+.loom-mem-sticky > .loom-mem-dim { flex: 1 1 0; }
+.loom-mem-row > .loom-btn { flex: 0 0 auto; min-width: 120px; }
+.loom-mem-card h4 .loom-icon-btn { width: 30px; height: 30px; display: grid; place-content: center; }
+.loom-mem-item .loom-icon-btn { width: 32px; height: 32px; display: grid; place-content: center; }
+.loom-mem-top .loom-icon-btn { width: 36px; height: 36px; display: grid; place-content: center; font-size: 18px; }
