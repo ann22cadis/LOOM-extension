@@ -3621,7 +3621,7 @@ body.loom-folders-circles .loom-folder-inline-empty { grid-column: 1 / -1; }
 }
 
 /* ─── Память чата: во весь экран, отступы под вырез и TauriTavern (как #loom-backdrop) ── */
-#loom-memory {
+#loom-memory, #loom-rx {
     --loom-bg: var(--SmartThemeBlurTintColor, #16171c);
     --loom-surface: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 4%, transparent);
     --loom-surface-hover: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8ea) 8%, transparent);
@@ -3758,3 +3758,15 @@ body.loom-folders-circles .loom-folder-inline-empty { grid-column: 1 / -1; }
 @media (max-width: 768px) {
     .loom-editor-actions:not(.loom-review-actions) > .loom-weight { grid-column: 1 / -1; justify-self: end; }
 }
+
+/* Конструктор инфоблока */
+.loom-rx-code { font-family: var(--monoFontFamily, monospace); font-size: 12px; }
+.loom-rx-preview {
+    padding: 10px 12px; margin-bottom: 8px; border-radius: 10px;
+    border: 1px dashed var(--loom-border); background: var(--SmartThemeBotMesBlurTintColor, transparent);
+    color: var(--SmartThemeBodyColor); overflow-x: auto; min-height: 40px;
+}
+.loom-rx-preview .mes_text { padding: 0; }
+.loom-rx-check { margin-left: auto; font-size: 11px; font-weight: normal; }
+.loom-rx-check.ok { color: var(--loom-accent); }
+.loom-rx-check.bad { color: #e0566b; }

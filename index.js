@@ -16,7 +16,8 @@
  *   src/tavern-import.js — импорт персонажей и лорбуков ИЗ Таверны, с резервной копией
  */
 
-import { user_avatar } from '../../../personas.js';
+import { openRegexStudio } from './src/regex-studio.js';
+import { world_names } from '../../../world-info.js';
 import {
     getSettings, saveSettings, saveSettingsImmediate, CARD_TARGETS, DEFAULT_CHARACTER_FORMAT, DEFAULT_LOREBOOK_FORMAT,
     DEFAULT_PERSONA_FORMAT, BUILTIN_CHARACTER_PRESETS, BUILTIN_LOREBOOK_PRESETS, BUILTIN_PERSONA_PRESETS, activeFormat,
@@ -28,7 +29,7 @@ import { callAI, parseJsonLoose, listConnectionProfiles, setAbortSignal } from '
 import {
     characterSystemPrompt, characterCreatePrompt, characterRewritePrompt, characterOocPrompt, alternateGreetingPrompt, alternateGreetingsBatchPrompt,
     lorebookSystemPrompt, lorebookPlanPrompt, lorebookEntryPrompt, lorebookEntriesBatchPrompt, lorebookRewritePrompt,
-    personaSystemPrompt, personaCreatePrompt, personaRewritePrompt,
+    personaSystemPrompt, personaCreatePrompt, personaRewritePrompt, setWorldReference,
     promptSystemPrompt, promptCreatePrompt, promptRewritePrompt,
     plotSystemPrompt, plotCreatePrompt, plotStepPrompt,
     scenarioSystemPrompt, scenarioIdeasPrompt, scenarioCreatePrompt, scenarioRewritePrompt, SCENARIO_IDEA_COUNT,
@@ -129,6 +130,9 @@ async function withBusy(label, fn) {
     setStatus(label);
     $('#loom-panel').addClass('loom-busy');
     try {
+        // Персонаж/персона с выбранным лорбуком-сеттингом: справка о мире на всю операцию
+        const draft = currentDraft();
+        setWorldReference(draft && (draft.mode === 'character' || draft.mode === 'persona') ? await loadWorldReference(draft) : '');
         return await fn();
     } catch (error) {
         if (error?.aborted) {
@@ -143,6 +147,7 @@ async function withBusy(label, fn) {
         if (!error?.reportedByTavern) toast('error', message);
         return null;
     } finally {
+        setWorldReference('');
         state.busy = false;
         state.abortController = null;
         setAbortSignal(null);
@@ -1655,19 +1660,12 @@ function renderCharacter(draft) {
                     placeholder="Кто это? Мир, роль, возраст, что с ним происходит, чем цепляет. Чем конкретнее — тем меньше придётся переписывать.">${escapeHtml(draft.brief)}</textarea>
                 <textarea class="loom-notes-text" rows="3"
                     placeholder="Доп. требования">${escapeHtml(draft.notes)}</textarea>
+                ${renderWorldSource(draft)}
                 ${renderRefs(draft, 'Референсы: внешность, детали, вещи', 'refs-draft')}
                 ${renderAvatar(draft)}
             </details>
 
-            ${hasCard ? `
-            <details class="loom-brief" data-details-key="ooc">
-                <summary>OOC: переписать карточку целиком</summary>
-                <textarea class="loom-ooc-text" rows="3"
-                    placeholder="Что поменять во всей карточке. Например: сделай её на 10 лет старше и холоднее; убери магию">${escapeHtml(draft.oocRequest || '')}</textarea>
-                <button class="loom-btn loom-btn-accent" data-action="ooc-rewrite">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i> Переписать всё по OOC
-                </button>
-            </details>` : ''}
+            ${hasCard ? renderOocBlock(draft, 'карточку') : ''}
 
             ${hasCard ? `<div class="loom-rating-summary">
                 <div class="loom-rating-left">
@@ -1802,25 +1800,113 @@ async function rewriteCharacter(draft) {
     });
 }
 
+function renderOocBlock(draft, what) {
+    return `
+        <details class="loom-brief" data-details-key="ooc">
+            <summary>OOC: переписать ${what} целиком</summary>
+            <textarea class="loom-ooc-text" rows="3"
+                placeholder="Что поменять во всём тексте. Например: на 10 лет старше и холоднее; убери магию">${escapeHtml(draft.oocRequest || '')}</textarea>
+            <button class="loom-btn loom-btn-accent" data-action="ooc-rewrite">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> Переписать всё по OOC
+            </button>
+        </details>`;
+}
+
+/** Выбор лорбука-сеттинга: черновики-лорбуки LOOM и лорбуки Таверны. */
+function renderWorldSource(draft) {
+    const current = draft.worldSource || '';
+    const drafts = listDrafts().filter(d => d.mode === 'lorebook' && d.entries?.length);
+    const worlds = [...(world_names || [])].sort((a, b) => a.localeCompare(b));
+    const opt = (value, label) => `<option value="${escapeHtml(value)}" ${value === current ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    return `
+        <label class="loom-field">
+            <span class="loom-label">Сеттинг из лорбука</span>
+            <select class="loom-world-source">
+                <option value="">Не брать</option>
+                ${drafts.length ? `<optgroup label="Лорбуки LOOM">${drafts.map(d => opt(`draft:${d.id}`, d.name || 'Без имени')).join('')}</optgroup>` : ''}
+                ${worlds.length ? `<optgroup label="Лорбуки Таверны">${worlds.map(w => opt(`tavern:${w}`, w)).join('')}</optgroup>` : ''}
+            </select>
+        </label>
+        <span class="loom-hint">Модель пишет с оглядкой на мир: места, фракции, правила. Большой лорбук — только записи по теме.</span>`;
+}
+
+const WORLD_REFERENCE_LIMIT = 24000;
+
+/**
+ * Записи выбранного лорбука → текст справки для промпта. Помещается целиком — идёт
+ * целиком; не помещается — первыми константные и те, чьи ключи или название
+ * встречаются в задумке/тексте карточки, потом остальные по порядку, пока есть место.
+ */
+async function loadWorldReference(draft) {
+    const source = String(draft.worldSource || '');
+    if (!source) return '';
+    let entries = [];
+    if (source.startsWith('draft:')) {
+        const world = getDraft(source.slice(6));
+        entries = (world?.entries || []).map(e => ({
+            title: e.title,
+            keys: e.keys || [],
+            constant: !!e.constant,
+            text: entryContentText(e),
+        }));
+    } else if (source.startsWith('tavern:')) {
+        const data = await SillyTavern.getContext().loadWorldInfo(source.slice(7)).catch(() => null);
+        entries = Object.values(data?.entries || {}).filter(e => !e.disable).map(e => ({
+            title: e.comment || (e.key || [])[0] || '',
+            keys: e.key || [],
+            constant: !!e.constant,
+            text: String(e.content || ''),
+        }));
+    }
+    entries = entries.filter(e => e.text.trim());
+    if (!entries.length) return '';
+
+    const about = [draft.name, draft.brief, draft.notes, draft.oocRequest, sectionsText(draft.sections)].join('\n');
+    const lower = about.toLowerCase();
+    const hits = e => {
+        let score = e.constant ? 100 : 0;
+        if (e.title && lower.includes(e.title.toLowerCase())) score += 10;
+        for (const key of e.keys) {
+            if (isRegexKey(key) ? testKey(key, about).length : (key.trim().length > 2 && lower.includes(key.trim().toLowerCase()))) score += 5;
+        }
+        return score;
+    };
+    const block = e => `## ${e.title || 'Без названия'}\n${e.text.trim()}`;
+    const total = entries.reduce((n, e) => n + block(e).length, 0);
+    const ordered = total <= WORLD_REFERENCE_LIMIT
+        ? entries
+        : entries.map((e, i) => ({ e, i, score: hits(e) })).sort((a, b) => b.score - a.score || a.i - b.i).map(x => x.e);
+    const out = [];
+    let size = 0;
+    for (const e of ordered) {
+        const text = block(e);
+        if (size + text.length > WORLD_REFERENCE_LIMIT) continue;
+        out.push(text);
+        size += text.length;
+    }
+    return out.join('\n\n');
+}
+
 /** OOC: вся карточка (со сценой и импортированными полями) по словесному указанию. */
 async function oocRewriteCharacter(draft) {
     const request = String(draft.oocRequest || '').trim();
     if (!request) return toast('info', 'Напишите в поле OOC, что поменять.');
     if (!draft.sections.length) return toast('info', 'Карточка ещё пустая — сначала «Сгенерировать».');
 
-    const knownIds = new Set(activeFormat('character').map(item => item.id));
+    const kind = draft.mode === 'persona' ? 'persona' : 'character';
+    const knownIds = new Set(activeFormat(kind).map(item => item.id));
     const itemIds = draft.sections.filter(sec => knownIds.has(sec.id)).map(sec => sec.id);
     const extra = draft.sections.filter(sec => !knownIds.has(sec.id));
 
-    await withBusy('Переписываю карточку по OOC…', async () => {
-        const response = await callAI(characterOocPrompt(draft, request, itemIds, extra), {
-            system: characterSystemPrompt(),
+    await withBusy('Переписываю по OOC…', async () => {
+        const response = await callAI(characterOocPrompt(draft, request, itemIds, extra, kind), {
+            system: kind === 'persona' ? personaSystemPrompt() : characterSystemPrompt(),
             images: await loadImages(draft.images),
         });
         const parsed = parseJsonLoose(response, 'card');
         if (!parsed?.card) throw new Error(parseFailure(response, 'объект карточки'));
 
-        const known = itemIds.length ? sectionsFromResponse(parsed.card, 'character', itemIds) : [];
+        const known = itemIds.length ? sectionsFromResponse(parsed.card, kind, itemIds) : [];
         const free = freeSectionsFromResponse(parsed.card, extra);
         if (!known.length && !free.changed) throw new Error('В ответе модели не нашлось ни одного пункта.');
 
@@ -2087,9 +2173,12 @@ function renderPersona(draft) {
                     placeholder="Кто это? Возраст, роль, чем занимается, чем цепляет. Чем конкретнее — тем меньше придётся переписывать.">${escapeHtml(draft.brief)}</textarea>
                 <textarea class="loom-notes-text" rows="3"
                     placeholder="Доп. требования">${escapeHtml(draft.notes)}</textarea>
+                ${renderWorldSource(draft)}
                 ${renderRefs(draft, 'Референсы: внешность, детали', 'refs-draft')}
                 ${renderAvatar(draft, 'Картинка персоны', 'Обрезается до 2:3.')}
             </details>
+
+            ${hasCard ? renderOocBlock(draft, 'персону') : ''}
 
             ${hasCard ? `<div class="loom-rating-summary">
                 <div class="loom-rating-left">
@@ -2230,9 +2319,10 @@ function renderPrompt(draft) {
                         items: [
                             { action: 'translate-prompt', icon: 'fa-language', label: 'На английский' },
                             { action: 'download-prompt', icon: 'fa-download', label: 'Скачать TXT' },
+                            { action: 'regex-studio', icon: 'fa-code', label: 'Инфоблок с регексом', title: 'Промпт + регекс-оформление блока в чате, с предпросмотром' },
                         ],
                     })}
-                    ${renderHistoryPair(draft)}` : ''}
+                    ${renderHistoryPair(draft)}` : renderMenu({ icon: 'fa-ellipsis', label: 'Ещё', items: [{ action: 'regex-studio', icon: 'fa-code', label: 'Инфоблок с регексом', title: 'Промпт + регекс-оформление блока в чате, с предпросмотром' }] })}
                 </div>
             </div>
 
@@ -3095,8 +3185,6 @@ function renderLorebook(draft) {
                             { action: 'keys-check', icon: 'fa-clipboard-check', label: 'Проверить ключи', title: 'Показать проблемы с ключами, ничего не меняя' },
                             { action: 'entries-toggle', icon: 'fa-angles-down', label: 'Свернуть/развернуть записи' },
                             { action: 'translate-all', icon: 'fa-language', label: 'На английский', title: 'Перевести все написанные записи; ключи останутся русскими' },
-                            { action: 'bind-character', icon: 'fa-user-tag', label: 'Привязать к персонажу', title: 'Сделать основным лорбуком карточки в Таверне' },
-                            { action: 'bind-persona', icon: 'fa-id-badge', label: 'Привязать к персоне', title: 'Лорбук персоны в Таверне' },
                         ],
                     })}
                     ${renderWeight(draft.id, 'weigh-draft')}` : ''}
@@ -3659,67 +3747,6 @@ async function checkAllEntryKeys(draft) {
 }
 
 /**
- * Привязка выгруженного лорбука к персонажу (основной лорбук карточки, extensions.world)
- * или к персоне (persona_descriptions[аватар].lorebook) — то же, что кнопка с глобусом
- * в Таверне. Лорбук должен уже быть в Таверне: привязываем по имени последней выгрузки.
- */
-async function bindLorebookTo(draft, kind) {
-    const ctx = SillyTavern.getContext();
-    const world = draft.exportTarget || draft.importedWorld;
-    if (!world) return toast('info', 'Сначала выгрузите лорбук в Таверну — привязывается он по имени.');
-
-    const linkedAvatar = id => getDraft(id)?.importedAvatar || null;
-    let options;
-    let selected;
-    if (kind === 'character') {
-        options = (ctx.characters || []).map((c, i) => ({
-            value: String(i), label: c.name, now: c.data?.extensions?.world || '',
-        }));
-        const wanted = new Set((draft.characterIds || []).map(linkedAvatar).filter(Boolean));
-        selected = options.find(o => wanted.has(ctx.characters[Number(o.value)]?.avatar))?.value;
-    } else {
-        const personas = ctx.powerUserSettings?.personas || {};
-        const info = ctx.powerUserSettings?.persona_descriptions || {};
-        options = Object.entries(personas).map(([avatar, name]) => ({ value: avatar, label: name, now: info[avatar]?.lorebook || '' }));
-        selected = linkedAvatar(draft.personaId) || options[0]?.value;
-    }
-    if (!options.length) return toast('info', kind === 'character' ? 'В Таверне нет персонажей.' : 'В Таверне нет персон.');
-
-    const wrap = document.createElement('div');
-    wrap.innerHTML = `
-        <h3>Привязать «${escapeHtml(world)}» ${kind === 'character' ? 'к персонажу' : 'к персоне'}</h3>
-        <select class="text_pole loom-bind-target">
-            ${options.map(o => `<option value="${escapeHtml(o.value)}" ${o.value === selected ? 'selected' : ''}>
-                ${escapeHtml(o.label)}${o.now ? ` — сейчас: ${escapeHtml(o.now)}` : ''}</option>`).join('')}
-        </select>
-        <p class="loom-hint">Заменит ${kind === 'character' ? 'основной лорбук карточки' : 'лорбук персоны'}, если он был.</p>`;
-    const popup = new ctx.Popup(wrap, ctx.POPUP_TYPE.CONFIRM, '', { okButton: 'Привязать', cancelButton: 'Отмена' });
-    if (await popup.show() !== ctx.POPUP_RESULT.AFFIRMATIVE) return;
-    const value = wrap.querySelector('.loom-bind-target').value;
-
-    await withBusy('Привязываю лорбук…', async () => {
-        if (kind === 'character') {
-            const character = ctx.characters[Number(value)];
-            if (!character) throw new Error('Персонаж не найден.');
-            await ctx.writeExtensionField(Number(value), 'world', world);
-            if (character.data?.extensions?.world !== world) throw new Error('Таверна не приняла привязку.');
-            if (String(ctx.characterId) === value) $('#set_character_world, #world_button').addClass('world_set');
-            toast('success', `«${world}» — основной лорбук «${character.name}».`);
-        } else {
-            const info = ctx.powerUserSettings.persona_descriptions;
-            info[value] = { ...(info[value] || {}), lorebook: world };
-            ctx.saveSettingsDebounced();
-            // Персона сейчас выбрана — Таверна читает её лорбук из отдельного поля, не из описаний
-            if (user_avatar === value) {
-                ctx.powerUserSettings.persona_description_lorebook = world;
-                $('#persona_lore_button').addClass('world_set');
-            }
-            toast('success', `«${world}» привязан к персоне «${ctx.powerUserSettings.personas[value]}».`);
-        }
-    });
-}
-
-/**
  * Ключи для ВСЕХ записей лорбука одним запросом.
  *
  * Кнопка «Ключи» у записи дёргает модель по одной записи — при плане на восемь
@@ -3859,6 +3886,58 @@ async function writePresetEntry(draft, entry, { silent = false } = {}) {
     entry.sections = sections;
     touchDraft(draft);
     if (!silent) { renderMain(); toast('success', `Блок «${entry.title}» написан.`); }
+}
+
+/** Конструктор инфоблока: промпт уходит блоком в пресет или пунктом в промпт. */
+function openStudioFor(draft) {
+    const asSection = (studio, id) => freeSectionsFromResponse(
+        { [id]: studio.prompt }, [{ id, label: studio.name || 'Инфоблок', blocks: [] }]).sections[0];
+    openRegexStudio(draft, {
+        addLabel: draft.mode === 'preset' ? 'Блоком в пресет' : 'В промпт',
+        onSave: d => touchDraft(d),
+        onClose: () => renderMain(),
+        onAddPrompt: (d, studio) => {
+            if (d.mode === 'preset') {
+                const entry = createEntry(d, { title: studio.name || 'Инфоблок', seed: studio.idea });
+                entry.sections = [asSection(studio, 'imported')];
+                entryOpenState.set(entry.id, true);
+                touchDraft(d);
+                return `Блок «${entry.title}» добавлен в конец пресета.`;
+            }
+            d.sections.push(asSection(studio, `regex-${uid()}`));
+            touchDraft(d);
+            return 'Промпт добавлен последним пунктом.';
+        },
+    });
+}
+
+/** OOC: новый блок пресета по словесной просьбе — имя и текст пишет модель. */
+async function oocPresetBlock(draft) {
+    const request = String(draft.oocRequest || '').trim();
+    if (!request) return toast('info', 'Напишите в поле OOC, какой блок нужен.');
+    await withBusy('Пишу новый блок…', async () => {
+        const wordCount = getSettings().lorebook_default_word_count || 300;
+        const response = await callAI(
+            presetEntryPrompt({
+                ooc: true, title: '', seed: request, brief: draft.brief, notes: draft.notes,
+                siblings: draft.entries.map(e => e.title), wordCount,
+            }),
+            { system: presetSystemPrompt(), maxTokens: entryMaxTokens(wordCount) },
+        );
+        const parsed = parseJsonLoose(response, 'entry');
+        if (!parsed?.entry) throw new Error(parseFailure(response, 'объект блока'));
+        const sections = sectionsFromResponse(parsed.entry, 'preset');
+        if (!sections.length) throw new Error('В ответе нет ни одного пункта формата.');
+
+        const title = String(parsed.title || '').trim() || request.slice(0, 40);
+        const entry = createEntry(draft, { title, seed: request, wordCount });
+        entry.sections = sections;
+        draft.oocRequest = '';
+        entryOpenState.set(entry.id, true);
+        touchDraft(draft);
+        renderMain();
+        toast('success', `Блок «${title}» добавлен в конец.`);
+    });
 }
 
 /** См. writeEntriesBatch (лорбук). @returns {Promise<number>} сколько блоков получили текст */
@@ -4040,6 +4119,7 @@ function renderPreset(draft) {
                         label: 'Ещё',
                         items: [
                             { action: 'translate-all', icon: 'fa-language', label: 'На английский', title: 'Перевести все написанные блоки' },
+                            { action: 'regex-studio', icon: 'fa-code', label: 'Инфоблок с регексом', title: 'Промпт + регекс-оформление блока в чате, с предпросмотром' },
                         ],
                     })}
                     ${renderWeight(draft.id, 'weigh-draft')}` : ''}
@@ -4059,6 +4139,15 @@ function renderPreset(draft) {
             </details>
 
             ${renderPresetReview(draft)}
+
+            <details class="loom-brief" data-details-key="preset-ooc">
+                <summary>OOC: новый блок</summary>
+                <textarea class="loom-ooc-text" rows="3"
+                    placeholder="Какой блок нужен. Например: запрет на пересказ реплик {{user}}; правила для сцен боя">${escapeHtml(draft.oocRequest || '')}</textarea>
+                <button class="loom-btn loom-btn-accent" data-action="preset-ooc">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Создать блок
+                </button>
+            </details>
 
             ${hasPlan
                 ? draft.entries.map((entry, index) => renderPresetEntry(entry, index)).join('')
@@ -4210,6 +4299,14 @@ function renderPresetReview(draft) {
                 placeholder="Что не так с ответами модели? Можно коротко — «сухо», «текст как у бота», «скатывается в одно и то же». Пример ответа только поможет.">${escapeHtml(review.brief)}</textarea>
             <textarea class="loom-review-notes" rows="2"
                 placeholder="Что уже пробовали, что менять не хочется.">${escapeHtml(review.notes)}</textarea>
+            <label class="loom-field compact">
+                <span class="loom-label">История чата как пример</span>
+                <select class="loom-review-chat">
+                    ${[[0, 'Не брать'], [10, 'Последние 10 сообщений'], [30, 'Последние 30 сообщений']].map(([n, label]) => `
+                    <option value="${n}" ${Number(review.chatTail || 0) === n ? 'selected' : ''}>${label}</option>`).join('')}
+                </select>
+            </label>
+            <span class="loom-hint">Из открытого сейчас чата — модель увидит, как пресет пишет на деле.</span>
             <div class="loom-editor-actions loom-review-actions">
                 <button class="loom-btn loom-btn-primary loom-btn-small" data-action="review-generate">
                     <i class="fa-solid fa-magnifying-glass-chart"></i> ${hasReview ? 'Разобрать заново' : 'Разобрать'}
@@ -4322,6 +4419,17 @@ async function requireReviewDigest(draft) {
     return result;
 }
 
+/** Хвост открытого чата для анализа пресета: последние n сообщений, без системных. */
+function reviewChatSample(review) {
+    const n = Number(review.chatTail) || 0;
+    const ctx = SillyTavern.getContext();
+    if (!n) return '';
+    if (!ctx.chatId || !ctx.chat?.length) throw new Error('Чтобы взять историю, откройте чат в Таверне (или выберите «Не брать»).');
+    return ctx.chat.filter(m => !m.is_system).slice(-n)
+        .map(m => `${m.is_user ? '[USER] ' : ''}${m.name}: ${String(m.mes || '').trim().slice(0, 2500)}`)
+        .join('\n\n');
+}
+
 /** После генерации плашка должна остаться раскрытой — иначе результат не виден. */
 function renderMainWithReviewOpen() {
     renderMain();
@@ -4333,7 +4441,7 @@ async function generateReview(draft) {
     await withBusy('Читаю пресет и ищу причину…', async () => {
         const { digest, sourceLabel } = await requireReviewDigest(draft);
         const response = await callAI(
-            analysisCreatePrompt({ brief: review.brief, notes: review.notes, digest, sourceLabel }),
+            analysisCreatePrompt({ brief: review.brief, notes: review.notes, digest, sourceLabel, chatSample: reviewChatSample(review) }),
             { system: analysisSystemPrompt() },
         );
         const parsed = parseJsonLoose(response, 'card');
@@ -4363,7 +4471,7 @@ async function rewriteReview(draft) {
     await withBusy('Переписываю разбор…', async () => {
         const { digest, sourceLabel } = await requireReviewDigest(draft);
         const itemIds = toRewrite.map(s => s.id);
-        const response = await callAI(analysisRewritePrompt(review, digest, sourceLabel, itemIds), {
+        const response = await callAI(analysisRewritePrompt(review, digest, sourceLabel, itemIds, reviewChatSample(review)), {
             system: analysisSystemPrompt(),
         });
         const parsed = parseJsonLoose(response, 'card');
@@ -4390,7 +4498,7 @@ async function regenerateReviewSection(draft, sectionId) {
 
     await withBusy(`Переписываю «${item.label}»…`, async () => {
         const { digest, sourceLabel } = await requireReviewDigest(draft);
-        const response = await callAI(analysisRewritePrompt(review, digest, sourceLabel, [sectionId]), {
+        const response = await callAI(analysisRewritePrompt(review, digest, sourceLabel, [sectionId], reviewChatSample(review)), {
             system: analysisSystemPrompt(),
         });
         const parsed = parseJsonLoose(response, 'card');
@@ -4606,6 +4714,13 @@ function bindEditorEvents() {
     $main.on('input', '.loom-brief-text', function () {
         const draft = currentDraft();
         if (draft) { draft.brief = $(this).val(); touchDraft(draft); }
+    });
+
+    $main.on('change', '.loom-world-source', function () {
+        const draft = currentDraft();
+        if (!draft) return;
+        draft.worldSource = $(this).val() || '';
+        touchDraft(draft);
     });
 
     $main.on('input', '.loom-ooc-text', function () {
@@ -4986,6 +5101,11 @@ function bindEditorEvents() {
     $main.on('input', '.loom-review-brief', function () {
         const draft = currentDraft();
         if (draft?.review) { draft.review.brief = $(this).val(); touchDraft(draft); }
+    });
+
+    $main.on('change', '.loom-review-chat', function () {
+        const draft = currentDraft();
+        if (draft?.review) { draft.review.chatTail = Number($(this).val()) || 0; touchDraft(draft); }
     });
 
     $main.on('input', '.loom-review-notes', function () {
@@ -5447,8 +5567,6 @@ function bindEditorEvents() {
                 return renderMain();
             }
             case 'keys-check': return checkAllEntryKeys(draft);
-            case 'bind-character': return bindLorebookTo(draft, 'character');
-            case 'bind-persona': return bindLorebookTo(draft, 'persona');
             case 'weigh-draft': {
                 const text = ENTRY_BASED_MODES.has(draft.mode)
                     ? draft.entries.map(entryContentText).filter(Boolean).join('\n\n')
@@ -5517,6 +5635,8 @@ function bindEditorEvents() {
                 });
             }
             case 'preset-rewrite-all': return rewriteAllPresetEntries(draft);
+            case 'preset-ooc': return oocPresetBlock(draft);
+            case 'regex-studio': return openStudioFor(draft);
             case 'export-preset': {
                 const name = draft.name?.trim();
                 if (!name) return toast('error', 'Укажите имя пресета.');

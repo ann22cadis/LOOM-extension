@@ -269,10 +269,23 @@ function speakerNameRule(characterIds, personaId) {
         + 'person - not by their own name.';
 }
 
+/*
+ * Сеттинг из лорбука для персонажа/персоны. Ставится на время одной операции
+ * (withBusy в index.js) и сам попадает в начало промпта — так его получают все
+ * запросы карточки разом, не пробрасываясь параметром через каждую функцию.
+ */
+let worldReference = '';
+export function setWorldReference(text) { worldReference = String(text || '').trim(); }
+
 /** Собирает промпт, добавляя думалку последней: инструкции в конце модель выполняет охотнее. */
 function withPlan(parts, kind) {
     const plan = thinkingPlan(kind);
-    return (plan ? [...parts, '', plan] : parts).join('\n');
+    const world = worldReference && (kind === 'character' || kind === 'persona')
+        ? ['SETTING REFERENCE (entries from the lorebook of this world - the card must fit it: places, factions, '
+            + 'rules, history and names come from here; do not contradict it, do not retell it, use only what the '
+            + 'character would plausibly be tied to):', worldReference, '']
+        : [];
+    return [...world, ...parts, ...(plan ? ['', plan] : [])].join('\n');
 }
 
 /**
@@ -529,9 +542,9 @@ export function characterRewritePrompt(draft, itemIds = null, extraNote = '') {
  * @param {string[]} itemIds пункты формата, которые есть в карточке
  * @param {Array<{id: string, label: string}>} extraSections пункты вне формата
  */
-export function characterOocPrompt(draft, request, itemIds, extraSections = []) {
+export function characterOocPrompt(draft, request, itemIds, extraSections = [], kind = 'character') {
     const items = [
-        ...activeFormat('character').filter(item => itemIds.includes(item.id)),
+        ...activeFormat(kind).filter(item => itemIds.includes(item.id)),
         ...extraSections.map(sec => ({
             id: sec.id,
             hint: `The rewritten text of "${sec.label}" - keep what the instruction does not touch.`,
@@ -539,13 +552,13 @@ export function characterOocPrompt(draft, request, itemIds, extraSections = []) 
     ];
     const digest = feedbackDigest(draft.sections);
     return withPlan([
-        'TASK: rewrite the WHOLE character card following the user\'s OOC instruction below.',
+        `TASK: rewrite the WHOLE ${kind === 'persona' ? 'user persona' : 'character card'} following the user's OOC instruction below.`,
         'The instruction has top priority: apply it everywhere it matters, consistently across all items. '
             + 'Everything it does not touch keeps its substance, facts and tone.',
         '',
         `OOC INSTRUCTION FROM THE USER:\n${String(request || '').trim()}`,
         '',
-        `CHARACTER NAME: ${draft.name || '(invent one)'}`,
+        `${kind === 'persona' ? 'PERSONA' : 'CHARACTER'} NAME: ${draft.name || '(invent one)'}`,
         '',
         'ORIGINAL IDEA:',
         String(draft.brief || '').trim() || '(none given)',
@@ -561,10 +574,10 @@ export function characterOocPrompt(draft, request, itemIds, extraSections = []) 
         '',
         commonRules(),
         '',
-        'Return: { "name": "character name", "card": { … } }, where card contains ALL these items:',
+        `Return: { "name": "${kind === 'persona' ? 'persona' : 'character'} name", "card": { … } }, where card contains ALL these items:`,
         '',
-        formatContract('character', items),
-    ], 'character');
+        formatContract(kind, items),
+    ], kind);
 }
 
 export function renderDraftPlain(draft) {
@@ -1646,8 +1659,10 @@ export function presetEntryPrompt(input) {
     const parts = [
         'TASK: write the content of a single named instruction block for a SillyTavern preset.',
         '',
-        `BLOCK NAME: ${input.title}`,
-        input.seed ? `WHAT IT IS FOR: ${input.seed}` : '',
+        input.ooc
+            ? `OOC REQUEST FROM THE USER - write a NEW block that does exactly this:\n${input.seed}`
+            : `BLOCK NAME: ${input.title}`,
+        !input.ooc && input.seed ? `WHAT IT IS FOR: ${input.seed}` : '',
         '',
         'WHAT THIS PRESET IS FOR (overall):',
         String(input.brief || '').trim() || '(none given)',
@@ -1675,6 +1690,7 @@ export function presetEntryPrompt(input) {
         '',
         'Response structure:',
         '{',
+        input.ooc ? '  "title": "short block name, 2-5 words, in the user\'s language",' : '',
         '  "entry": { … }',
         '}',
         '',
@@ -1682,7 +1698,7 @@ export function presetEntryPrompt(input) {
         '',
         formatContract('preset', null, PRESET_SPLIT_RULE),
     );
-    return withPlan(parts, 'preset');
+    return withPlan(parts.filter(line => line !== null), 'preset');
 }
 
 /**
@@ -1948,6 +1964,7 @@ export function analysisCreatePrompt(input) {
     if (String(input.notes || '').trim()) {
         parts.push('', 'EXTRA CONTEXT FROM THE USER:', input.notes.trim());
     }
+    if (String(input.chatSample || '').trim()) parts.push('', CHAT_SAMPLE_HEAD, input.chatSample.trim());
 
     parts.push(
         '',
@@ -1982,7 +1999,10 @@ export function analysisCreatePrompt(input) {
  * @param {string} sourceLabel
  * @param {string[]} [itemIds]
  */
-export function analysisRewritePrompt(draft, digest, sourceLabel, itemIds = null) {
+const CHAT_SAMPLE_HEAD = 'RECENT CHAT PRODUCED WITH THIS PRESET (real evidence of the problem - point at concrete '
+    + 'messages and phrases when naming a cause; the user\'s own lines are not the model\'s fault):';
+
+export function analysisRewritePrompt(draft, digest, sourceLabel, itemIds = null, chatSample = '') {
     const feedback = feedbackDigest(draft.sections);
     const allItems = activeFormat('analysis');
     const items = itemIds ? allItems.filter(item => itemIds.includes(item.id)) : allItems;
@@ -1998,6 +2018,7 @@ export function analysisRewritePrompt(draft, digest, sourceLabel, itemIds = null
     if (String(draft.notes || '').trim()) {
         parts.push('', 'EXTRA CONTEXT FROM THE USER:', draft.notes.trim());
     }
+    if (String(chatSample || '').trim()) parts.push('', CHAT_SAMPLE_HEAD, chatSample.trim());
 
     parts.push(
         '',
