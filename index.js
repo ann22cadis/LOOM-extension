@@ -5765,22 +5765,31 @@ function bindEditorEvents() {
         // Ключи изменились — ранее собранные regex к ним больше не относятся
         found.entry.finalKeys = [];
         touchDraft(found.draft);
-        renderMain();
-        // Ключи вводят пачкой, а renderMain отрисовывает поле заново — без возврата
-        // фокуса пришлось бы после каждого ключа снова тыкать в поле и поднимать
-        // экранную клавиатуру.
-        $main.find(`.loom-entry[data-entry="${found.index}"] .loom-key-input`).trigger('focus');
+        // Перерисовываем одну запись, а не всю панель, и фокус возвращаем без прокрутки:
+        // иначе на телефоне после Enter страницу уносило вниз, к полю или к концу списка
+        rerenderEntry(found);
+        $main.find(`.loom-entry[data-entry="${found.index}"] .loom-key-input`).get(0)?.focus({ preventScroll: true });
     });
+
+    /** Перерисовка одной записи лорбука на месте: прокрутка и открытые <details> не сбрасываются. */
+    function rerenderEntry(found) {
+        const $old = $main.find(`.loom-entry[data-entry="${found.index}"]`);
+        if (!$old.length) return renderMain();
+        const details = captureDetailsState($old);
+        const scroll = $main.scrollTop();
+        $old.replaceWith(renderEntry(found.entry, found.index));
+        const $new = $main.find(`.loom-entry[data-entry="${found.index}"]`);
+        restoreDetailsState($new, details);
+        growAll($new);
+        hydrateThumbs($new);
+        $main.scrollTop(scroll);
+    }
 
     $main.on('click', '.loom-entry-toggle', function () {
         const found = resolveEntry($(this));
         if (!found) return;
         entryOpenState.set(found.entry.id, !isEntryOpen(found.entry));
-        const $entry = $(this).closest('.loom-entry');
-        $entry.replaceWith(renderEntry(found.entry, found.index));
-        const $new = $main.find(`.loom-entry[data-entry="${found.index}"]`);
-        growAll($new);
-        hydrateThumbs($new);
+        rerenderEntry(found);
     });
 
     // Свой пункт записи: пустой, пишется потом кнопкой «переписать только этот пункт»
@@ -5805,7 +5814,7 @@ function bindEditorEvents() {
         found.entry.keys.splice(Number($(this).data('key')), 1);
         found.entry.finalKeys = [];
         touchDraft(found.draft);
-        renderMain();
+        rerenderEntry(found);
     });
 
     // Высота полей подгоняется под текст: карточку читают целиком, а не через скроллбары
