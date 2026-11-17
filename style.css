@@ -3767,3 +3767,30 @@ body.loom-folders-circles .loom-folder-inline-empty { grid-column: 1 / -1; }
 .loom-rx-check { margin-left: auto; font-size: 11px; font-weight: normal; }
 .loom-rx-check.ok { color: var(--loom-accent); }
 .loom-rx-check.bad { color: #e0566b; }
+
+/* Память чата: выбор диапазона сообщений */
+.loom-mem-selinfo { font-size: 13px; margin-bottom: 4px; }
+.loom-mem-warn { display: block; color: #e0566b; font-size: 12px; }
+.loom-mem-seltext { max-height: 220px; overflow-y: auto; font-size: 12px; color: var(--loom-text-dim); padding: 6px 8px; margin-bottom: 6px; border: 1px solid var(--loom-border); border-radius: 8px; }
+.loom-mem-seltext div { margin-bottom: 4px; overflow-wrap: anywhere; }
+.loom-mem-sel { margin: 6px 0 8px; }
+.loom-mem-row input[type="number"] { flex: 0 1 90px; }
+#loom-pickbar {
+    position: fixed; left: 8px; right: 8px; z-index: 99999;
+    bottom: calc(var(--tt-viewport-bottom-inset, env(safe-area-inset-bottom, 0px)) + 8px);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 12px;
+    background: var(--SmartThemeBlurTintColor, #16171c); color: var(--SmartThemeBodyColor, #e8e8ea);
+    border: 1px solid var(--SmartThemeQuoteColor, #c9a86a); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    font-size: 13px;
+}
+#loom-pickbar .loom-pick-text { flex: 1 1 100%; }
+#loom-pickbar .loom-btn { padding: 5px 12px; border-radius: 10px; border: 1px solid var(--SmartThemeBorderColor, #555); background: transparent; color: inherit; cursor: pointer; }
+#loom-pickbar .loom-btn-primary { background: var(--SmartThemeQuoteColor, #c9a86a); color: #14151a; border-color: transparent; }
+#loom-pickbar .loom-btn:disabled { opacity: .4; }
+#chat .mes.loom-pick-in { background: color-mix(in srgb, var(--SmartThemeQuoteColor, #c9a86a) 14%, transparent) !important; box-shadow: inset 4px 0 0 var(--SmartThemeQuoteColor, #c9a86a); }
+#chat .mes.loom-pick-edge { outline: 2px solid var(--SmartThemeQuoteColor, #c9a86a); outline-offset: -2px; }
+
+/* Память чата и инфоблок: у тем с полупрозрачным фоном сквозь окно просвечивал чат —
+   размытие под окном и второй слой фона под содержимым */
+#loom-memory, #loom-rx { backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+.loom-mem-panel { background: var(--loom-bg); }

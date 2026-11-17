@@ -63,7 +63,7 @@ let entryFilter = 'all';
 let openEntry = null; // id раскрытой записи
 let overlay = null;
 // Поля окна, которые не хранятся в памяти чата, — чтобы перерисовка их не сбрасывала
-const form = { range: 'new', want: { summary: true, facts: true, entries: true, notes: true }, ooc: '', oocType: 'auto' };
+const form = { range: 'new', from: '', to: '', usePrev: true, showText: false, want: { summary: true, facts: true, entries: true, notes: true }, ooc: '', oocType: 'auto' };
 
 // ─── Состояние ──────────────────────────────────────────────────────────────
 
@@ -88,6 +88,7 @@ function memory() {
     m.opts.inject ??= true;
     m.opts.depth ??= 4;
     m.opts.regex ??= true;
+    m.opts.world ??= ''; // '' — лорбук чата (или новый); иначе имя выбранного лорбука
     for (const f of m.facts) f.cat ||= 'events';
     for (const e of m.entries) { e.type ||= 'other'; e.keys ||= []; }
     if (m.analyzedUpTo === undefined) m.analyzedUpTo = -1;
@@ -138,21 +139,66 @@ function syncPrompt() {
 
 // ─── Чат как текст ──────────────────────────────────────────────────────────
 
-/** Сообщения [from…конец] без системных, с потолком по символам с конца. */
-function transcript(from = 0, filter = null) {
+/**
+ * Текст сообщения без HTML-разметки: цвета, <center>, <br> и прочее оформление модели не
+ * нужны для памяти, а в длинных ролевых съедали заметную часть лимита.
+ */
+function plainText(mes) {
+    return String(mes || '')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/(p|div|center|li|h\d)>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+/**
+ * Сообщения [from…to] без системных, с потолком по символам. Потолок режет с начала, если
+ * диапазон задан руками (keepStart: человек выбрал начало — оно и должно прочитаться),
+ * иначе с конца (свежее важнее). Сколько не влезло — в list.skipped.
+ */
+function transcript(from = 0, filter = null, { to = Infinity, keepStart = false } = {}) {
     const { chat } = ctx();
-    const list = [];
-    let total = 0;
-    for (let i = chat.length - 1; i >= Math.max(0, from); i--) {
+    const first = Math.max(0, from);
+    const last = Math.min(chat.length - 1, to);
+    const all = [];
+    for (let i = first; i <= last; i++) {
         const msg = chat[i];
         if (!msg || msg.is_system) continue;
-        const text = String(msg.mes || '').trim().slice(0, MAX_MESSAGE);
+        const text = plainText(msg.mes).slice(0, MAX_MESSAGE);
         if (!text || (filter && !filter(text, i))) continue;
-        total += text.length;
-        if (total > MAX_TRANSCRIPT && list.length) break;
-        list.unshift({ index: i, name: msg.name || (msg.is_user ? 'User' : 'Character'), text });
+        all.push({ index: i, name: msg.name || (msg.is_user ? 'User' : 'Character'), text });
     }
+    const list = [];
+    let total = 0;
+    for (const item of keepStart ? all : [...all].reverse()) {
+        total += item.text.length;
+        if (total > MAX_TRANSCRIPT && list.length) break;
+        list.push(item);
+    }
+    if (!keepStart) list.reverse();
+    list.skipped = all.length - list.length;
     return list;
+}
+
+/** Выбранный диапазон → {from, to, keepStart, label}; бросает понятную ошибку, если задан криво. */
+function resolveRange(m, range = form.range) {
+    const last = ctx().chat.length - 1;
+    if (last < 0) throw new Error('В чате нет сообщений.');
+    if (range === 'new') return { from: m.analyzedUpTo + 1, to: last, keepStart: false, label: 'новые' };
+    if (range === 'last') return { from: Math.max(0, last - 29), to: last, keepStart: false, label: 'последние 30' };
+    if (range === 'all') return { from: 0, to: last, keepStart: false, label: 'весь чат' };
+    let from = Math.floor(Number(form.from));
+    let to = Math.floor(Number(form.to));
+    if (!Number.isFinite(from) || !Number.isFinite(to) || form.from === '' || form.to === '') {
+        throw new Error('Укажите, с какого и по какое сообщение (номера #N как в чате).');
+    }
+    if (from > to) [from, to] = [to, from];
+    if (from > last) throw new Error(`В чате сообщения только до #${last}.`);
+    if (to < 0) throw new Error('Номера сообщений начинаются с #0.');
+    return { from: Math.max(0, from), to: Math.min(last, to), keepStart: true, label: 'свой диапазон' };
 }
 
 const asText = list => list.map(x => `[#${x.index}] ${x.name}: ${x.text}`).join('\n\n');
@@ -163,13 +209,37 @@ function castLine() {
     return `Character(s): ${String(c.name2 || '').trim() || '(unknown)'}; player: ${String(c.name1 || '').trim() || '(unknown)'}.`;
 }
 
-const ENTRY_RULES = 'Keys: 1-4 names or words that appear in chat whenever the thing is mentioned (names, nicknames, the noun itself) - '
-    + 'in the chat language, base form. Content: 60-200 words, full name in the first sentence, only what the chat established, '
-    + 'written as reference facts (not a retelling of scenes).';
+/** Имена тех, кто говорит в чате: Таверна ищет ключи и в подписи говорящего, такой ключ сработает на КАЖДОМ сообщении. */
+function speakerNames() {
+    const c = ctx();
+    const names = [c.name1, c.name2];
+    // Подписи в самих сообщениях: персону могли сменить, а старые реплики подписаны прежним именем
+    for (const m of (c.chat || []).slice(-300)) if (!m.is_system && m.name) names.push(m.name);
+    return [...new Set(names.map(n => String(n || '').trim()).filter(Boolean))];
+}
+
+function isSpeakerKey(key) {
+    const k = String(key || '').trim().toLowerCase();
+    if (!k) return false;
+    return speakerNames().some(name => {
+        const n = name.toLowerCase();
+        return k === n || n.split(/\s+/).includes(k);
+    });
+}
+
+function entryRules() {
+    const names = speakerNames();
+    return 'Keys: 1-4 names or words that appear in chat whenever the thing is mentioned (names, nicknames, the noun itself) - '
+        + 'in the chat language, base form (nominative singular): the interface adds case endings itself. '
+        + (names.length ? `NEVER use these names or their parts as keys: ${names.map(n => `"${n}"`).join(', ')} - every message is `
+            + 'signed with the speaker name, so such a key fires on every message. An entry about them is keyed by its topic. ' : '')
+        + 'Content: 60-200 words, full name in the first sentence, only what the chat established, written as reference facts '
+        + '(not a retelling of scenes).';
+}
 
 // ─── Анализ ─────────────────────────────────────────────────────────────────
 
-function analysisPrompt(messages, want, m) {
+function analysisPrompt(messages, want, m, usePrev = true) {
     const parts = [
         'TASK: read a fragment of a roleplay chat and update the long-term memory of this story.',
         castLine(),
@@ -178,20 +248,24 @@ function analysisPrompt(messages, want, m) {
         asText(messages),
         '',
     ];
-    if (want.summary) parts.push('CURRENT SUMMARY:', String(m.summary.text || '').trim() || '(none yet)', '');
-    if (m.facts.length) {
+    if (usePrev && want.summary) parts.push('CURRENT SUMMARY:', String(m.summary.text || '').trim() || '(none yet)', '');
+    if (usePrev && m.facts.length) {
         parts.push('KNOWN FACTS (numbered):', m.facts.map((f, i) => `${i + 1}. [${f.cat}] ${f.text}`).join('\n'), '');
     }
-    if (m.entries.length) parts.push('EXISTING LOREBOOK ENTRIES:', m.entries.map(e => `- ${e.title} (${e.type})`).join('\n'), '');
+    if (usePrev && m.entries.length) parts.push('EXISTING LOREBOOK ENTRIES:', m.entries.map(e => `- ${e.title} (${e.type})`).join('\n'), '');
+    if (!usePrev) parts.push('Work ONLY from this fragment: there is no earlier memory to build on.', '');
 
     const fields = [];
-    if (want.summary) fields.push('  "summary": string - the CURRENT SUMMARY rewritten to include this fragment: the whole story so far in '
-        + 'past tense, key turns and their consequences, no dialogue. Keep it under 250 words; compress older parts harder than recent ones.');
+    if (want.summary) fields.push(usePrev
+        ? '  "summary": string - the CURRENT SUMMARY rewritten to include this fragment: the whole story so far in '
+            + 'past tense, key turns and their consequences, no dialogue. Keep it under 250 words; compress older parts harder than recent ones.'
+        : '  "summary": string - a summary of THIS fragment: what happens in it, in past tense, key turns and their '
+            + 'consequences, no dialogue. Keep it under 250 words.');
     if (want.facts) {
         fields.push('  "facts": [{"cat": string, "text": string}] - NEW durable facts from this fragment. cat is one of: '
             + FACT_CATS.map(c => `"${c.id}" (${c.en})`).join(', ') + '. One short concrete sentence with names. '
             + 'Skip fleeting actions and mood. Do not repeat known facts.');
-        fields.push('  "outdated": [number] - numbers of KNOWN FACTS that this fragment made false or obsolete '
+        if (usePrev) fields.push('  "outdated": [number] - numbers of KNOWN FACTS that this fragment made false or obsolete '
             + '(the hero left the place, the item was lost, the promise was kept). Empty if none.');
     }
     if (want.notes) fields.push('  "notes": [string] - notes for the player, not for the model: unresolved threads, hooks worth '
@@ -199,7 +273,7 @@ function analysisPrompt(messages, want, m) {
     if (want.entries) fields.push('  "entries": [{"type": string, "title": string, "keys": [string], "content": string}] - lorebook entries '
         + 'for NEW persistent things introduced in the chat that will matter again. type is one of: '
         + ENTRY_TYPES.map(t => `"${t.id}"`).join(', ') + '. To update an existing entry use its exact title and give full new content. '
-        + ENTRY_RULES);
+        + entryRules());
 
     parts.push(
         'Write in the same language as the chat. Return empty arrays where there is nothing worth keeping - empty is better than padding.',
@@ -217,7 +291,7 @@ function upsertEntry(m, raw) {
     const content = String(raw?.content || '').trim();
     if (!title || !content) return null;
     const type = ENTRY_TYPES.some(t => t.id === raw.type) ? raw.type : 'other';
-    const keys = strings(raw.keys);
+    const keys = strings(raw.keys).filter(k => !isSpeakerKey(k));
     const existing = m.entries.find(e => e.title.trim().toLowerCase() === title.toLowerCase());
     if (existing) {
         existing.content = content;
@@ -233,12 +307,12 @@ function upsertEntry(m, raw) {
 async function analyze(range, want) {
     const m = memory();
     if (!m) throw new Error('Откройте чат.');
-    const { chat } = ctx();
-    const from = range === 'new' ? m.analyzedUpTo + 1 : range === 'last' ? chat.length - 30 : 0;
-    const messages = transcript(from);
-    if (!messages.length) throw new Error(range === 'new' ? 'Новых сообщений с прошлого анализа нет.' : 'В чате нет сообщений.');
+    const usePrev = form.usePrev;
+    const sel = resolveRange(m, range);
+    const messages = transcript(sel.from, null, sel);
+    if (!messages.length) throw new Error(range === 'new' ? 'Новых сообщений с прошлого анализа нет.' : 'В выбранных сообщениях нет текста.');
 
-    const reply = await callAI(analysisPrompt(messages, want, m), {
+    const reply = await callAI(analysisPrompt(messages, want, m, usePrev), {
         system: 'You keep the long-term memory of a roleplay. Answer with JSON only.',
         maxTokens: 5000,
     });
@@ -246,14 +320,14 @@ async function analyze(range, want) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Модель не вернула JSON.');
     if (memory() !== m) throw new Error('Чат сменился во время анализа — результат отброшен.');
 
-    const r = { count: messages.length, facts: 0, outdated: 0, notes: 0, added: 0, updated: 0, summary: false };
+    const r = { count: messages.length, skipped: messages.skipped || 0, facts: 0, outdated: 0, notes: 0, added: 0, updated: 0, summary: false };
     if (want.summary && String(parsed.summary || '').trim()) {
         m.summary.text = String(parsed.summary).trim();
         m.summary.dirty = true;
         r.summary = true;
     }
     if (want.facts) {
-        const drop = new Set((Array.isArray(parsed.outdated) ? parsed.outdated : []).map(n => Number(n) - 1));
+        const drop = new Set(!usePrev ? [] : (Array.isArray(parsed.outdated) ? parsed.outdated : []).map(n => Number(n) - 1));
         const before = m.facts.length;
         m.facts = m.facts.filter((_, i) => !drop.has(i));
         r.outdated = before - m.facts.length;
@@ -272,7 +346,8 @@ async function analyze(range, want) {
         const res = upsertEntry(m, raw);
         if (res) res.added ? r.added++ : r.updated++;
     }
-    m.analyzedUpTo = Math.max(m.analyzedUpTo, messages.at(-1).index);
+    // Выбранный руками диапазон «прочитано до» не двигает: человек сам решает, что читать
+    if (range !== 'range') m.analyzedUpTo = Math.max(m.analyzedUpTo, messages.at(-1).index);
     commit();
     return r;
 }
@@ -305,7 +380,7 @@ async function oocEntry(request, type) {
         '',
         m.entries.length ? `EXISTING ENTRIES (reuse the exact title to update one): ${m.entries.map(e => e.title).join('; ')}` : '',
         '',
-        ENTRY_RULES,
+        entryRules(),
         'If the chat says little about it, write what there is - do not invent. Same language as the chat.',
         '',
         'Respond with JSON only: {"entry": {"type": string, "title": string, "keys": [string], "content": string}}',
@@ -322,9 +397,63 @@ async function oocEntry(request, type) {
 
 // ─── Лорбук чата ────────────────────────────────────────────────────────────
 
+/** Лорбук, привязанный к чату, — если он действительно есть в Таверне (его могли удалить). */
+function boundWorld() {
+    const name = ctx().chatMetadata?.[WORLD_KEY];
+    return name && (world_names || []).includes(name) ? name : '';
+}
+
+/** Куда пишет память: выбранный лорбук, иначе лорбук чата, иначе новый (тогда он же и привязывается). */
+async function targetWorld(m) {
+    const chosen = String(m.opts.world || '');
+    if (chosen && (world_names || []).includes(chosen)) return chosen;
+    if (chosen) throw new Error(`Лорбука «${chosen}» больше нет в Таверне — выберите другой.`);
+    return ensureChatWorld();
+}
+
+/** Свободное имя лорбука: «база», при занятом — «база 2», «база 3»… */
+function freeWorldName(base) {
+    const names = new Set(world_names || []);
+    let name = base;
+    for (let n = 2; names.has(name); n++) name = `${base} ${n}`;
+    return name;
+}
+
+async function bindToChat(name) {
+    const c = ctx();
+    c.chatMetadata[WORLD_KEY] = name;
+    await c.saveMetadata();
+    $('.chat_lorebook_button').addClass('world_set');
+}
+
+/**
+ * Дубль лорбука: копия целиком под новым именем, дальше память пишет в неё — оригинал не
+ * меняется. Если копировали лорбук этого чата, копия встаёт на его место в ЭТОМ чате
+ * (другие чаты и карточка не трогаются), иначе записи памяти не попадали бы в контекст.
+ */
+async function duplicateWorld(m) {
+    const c = ctx();
+    const source = String(m.opts.world || '') || boundWorld();
+    if (!source) throw new Error('Дублировать нечего: у чата нет лорбука (или его удалили) и другой не выбран.');
+    const data = await c.loadWorldInfo(source);
+    if (!data?.entries) throw new Error(`Не удалось прочитать «${source}».`);
+    const name = freeWorldName(`${source} + память`);
+    const chatId = c.chatId;
+    await c.saveWorldInfo(name, structuredClone(data), true);
+    await c.updateWorldInfoList?.();
+    if (ctx().chatId !== chatId) throw new Error('Чат сменился — дубль создан, но не выбран.');
+    // Записи памяти, уже выгруженные в оригинал, в копии лежат под теми же номерами
+    if (m.world === source) m.world = name;
+    m.opts.world = name;
+    const wasChatWorld = ctx().chatMetadata?.[WORLD_KEY] === source;
+    if (wasChatWorld) await bindToChat(name);
+    commit();
+    return `Дубль «${name}» создан, память пишет в него.${wasChatWorld ? ' В этом чате он заменил оригинал, сам оригинал не изменён.' : ' Чтобы записи работали, привяжите его к чату.'}`;
+}
+
 async function ensureChatWorld() {
     const c = ctx();
-    const bound = c.chatMetadata?.[WORLD_KEY];
+    const bound = boundWorld();
     if (bound) return bound;
     const base = `LOOM память — ${String(c.name2 || 'чат').trim()}`;
     const names = new Set(world_names || []);
@@ -363,7 +492,7 @@ async function exportToWorld() {
     if (!list.length && !withSummary) throw new Error('Нечего выгружать: нет записей с текстом.');
 
     const c = ctx();
-    const name = await ensureChatWorld();
+    const name = await targetWorld(m);
     let data = null;
     try { data = await c.loadWorldInfo(name); } catch { /* создадим */ }
     if (!data?.entries) data = { entries: {} };
@@ -418,10 +547,34 @@ function typeOptions(selected, withAuto = false) {
         .map(t => `<option value="${t.id}" ${t.id === selected ? 'selected' : ''}>${esc(t.label)}</option>`).join('');
 }
 
+/** Что реально прочитается при выбранном диапазоне — для живого показа под полями. */
+function selectionHtml(m) {
+    let sel;
+    let list;
+    try {
+        sel = resolveRange(m);
+        list = transcript(sel.from, null, sel);
+    } catch (error) {
+        return `<div class="loom-mem-dim">${esc(error.message)}</div>`;
+    }
+    if (!list.length) return '<div class="loom-mem-dim">В этом диапазоне нет сообщений с текстом.</div>';
+    const chars = list.reduce((n, x) => n + x.text.length, 0);
+    const snip = x => `#${x.index} ${x.name}: ${x.text.replace(/\s+/g, ' ').slice(0, 90)}${x.text.length > 90 ? '…' : ''}`;
+    return `
+        <div class="loom-mem-selinfo"><b>#${list[0].index} – #${list.at(-1).index}</b> · сообщений ${list.length} · ~${chars.toLocaleString('ru-RU')} симв.
+            ${list.skipped ? `<span class="loom-mem-warn">не влезло ${list.skipped} — лимит ${MAX_TRANSCRIPT.toLocaleString('ru-RU')} симв., сузьте диапазон</span>` : ''}</div>
+        ${form.showText
+        ? `<div class="loom-mem-seltext">${list.map(x => `<div>${esc(snip(x))}</div>`).join('')}</div>`
+        : `<div class="loom-mem-dim">${esc(snip(list[0]))}${list.length > 1 ? `<br>${esc(snip(list.at(-1)))}` : ''}</div>`}
+        <button type="button" class="loom-btn loom-btn-ghost loom-btn-small" data-mem="sel-text">${form.showText ? 'Свернуть текст' : 'Показать, что выбрано'}</button>`;
+}
+
 function renderOverview(m) {
     const { chat } = ctx();
     const fresh = chat.slice(m.analyzedUpTo + 1).filter(x => !x.is_system).length;
-    const world = ctx().chatMetadata?.[WORLD_KEY];
+    const world = boundWorld();
+    // Предупреждение нужно, только когда память и правда пошла бы в лорбук чата
+    const lostWorld = !world && !m.opts.world && ctx().chatMetadata?.[WORLD_KEY];
     return `
         <section class="loom-mem-card">
             <h4><i class="fa-solid fa-magnifying-glass"></i> Анализ чата</h4>
@@ -429,7 +582,22 @@ function renderOverview(m) {
                 <option value="new" ${form.range === 'new' ? 'selected' : ''}>Новое с прошлого анализа — ${fresh}</option>
                 <option value="last" ${form.range === 'last' ? 'selected' : ''}>Последние 30 сообщений</option>
                 <option value="all" ${form.range === 'all' ? 'selected' : ''}>Весь чат — ${chat.length}</option>
+                <option value="range" ${form.range === 'range' ? 'selected' : ''}>Свой диапазон сообщений…</option>
             </select>
+            ${form.range === 'range' ? `
+            <div class="loom-mem-row">
+                <label class="loom-mem-dim">с #</label>
+                <input type="number" class="text_pole loom-mem-from" min="0" max="${chat.length - 1}" value="${esc(form.from)}" placeholder="0">
+                <label class="loom-mem-dim">по #</label>
+                <input type="number" class="text_pole loom-mem-to" min="0" max="${chat.length - 1}" value="${esc(form.to)}" placeholder="${chat.length - 1}">
+                <button type="button" class="loom-btn loom-btn-accent" data-mem="pick-chat"><i class="fa-solid fa-hand-pointer"></i> Выбрать в чате</button>
+            </div>
+            <div class="loom-mem-dim">Номера как у сообщений в чате (#0 — первое, всего до #${chat.length - 1}).</div>` : ''}
+            <div class="loom-mem-sel">${selectionHtml(m)}</div>
+            <label class="loom-mem-switch" title="Выключено — память строится только по выбранным сообщениям, как с чистого листа">
+                <input type="checkbox" class="loom-mem-useprev" ${form.usePrev ? 'checked' : ''}>
+                <span>Учитывать прошлую память (сводку, факты, записи)</span></label>
+            ${form.usePrev ? '' : '<div class="loom-mem-dim">Прошлая память модели не показывается. Сводка будет заново по этим сообщениям и заменит старую; устаревшие факты не вычёркиваются.</div>'}
             <div class="loom-mem-chips">
                 ${[['summary', 'Сводка'], ['facts', 'Факты'], ['entries', 'Записи'], ['notes', 'Заметки']].map(([v, l]) => `
                 <label class="loom-mem-chip"><input type="checkbox" class="loom-mem-want" value="${v}" ${form.want[v] ? 'checked' : ''}><span>${l}</span></label>`).join('')}
@@ -468,9 +636,38 @@ function renderOverview(m) {
             <input type="number" class="text_pole loom-mem-depth" min="0" max="99" value="${Number(m.opts.depth) || 0}">
             <label class="loom-mem-switch"><input type="checkbox" class="loom-mem-opt" data-opt="regex" ${m.opts.regex ? 'checked' : ''}>
                 <span>Regex-ключи в лорбуке (ловят падежи)</span></label>
-            <div class="loom-mem-dim">Лорбук чата: ${world ? esc(world) : 'создастся при первой выгрузке'}</div>
+        </section>
+
+        <section class="loom-mem-card">
+            <h4><i class="fa-solid fa-book-atlas"></i> Лорбук для записей</h4>
+            ${renderWorldPicker(m, world)}
+            ${lostWorld ? `<div class="loom-mem-warn">К чату привязан «${esc(lostWorld)}», но такого лорбука в Таверне нет — при выгрузке будет создан новый.</div>` : ''}
             <div class="loom-mem-dim">Короткий чат — хватит сводки и фактов. Длинный — записи в лорбук: всплывают по ключам, только когда о них речь.</div>
         </section>`;
+}
+
+function renderWorldPicker(m, bound) {
+    const chosen = String(m.opts.world || '');
+    const names = [...(world_names || [])].sort((a, b) => a.localeCompare(b));
+    const target = chosen || bound || '';
+    const active = target && target === bound;
+    return `
+        <select class="text_pole loom-mem-world">
+            <option value="" ${!chosen ? 'selected' : ''}>${bound ? `Лорбук этого чата — ${esc(bound)}` : 'Новый «LOOM память» — создастся и привяжется к чату'}</option>
+            <optgroup label="Другой лорбук">
+                ${names.filter(n => n !== bound).map(n => `<option value="${esc(n)}" ${n === chosen ? 'selected' : ''}>${esc(n)}</option>`).join('')}
+            </optgroup>
+        </select>
+        <div class="loom-mem-row">
+            <button type="button" class="loom-btn loom-btn-ghost" data-mem="dup-world" ${target ? '' : 'disabled'}
+                title="Копия лорбука, в которую пишется память; оригинал не меняется"><i class="fa-solid fa-clone"></i> Сделать дубль</button>
+            ${target && !active ? `<button type="button" class="loom-btn loom-btn-ghost" data-mem="bind-world"
+                title="Сделать лорбуком этого чата"><i class="fa-solid fa-link"></i> Привязать к чату</button>` : ''}
+        </div>
+        <div class="loom-mem-dim">${!target ? 'При первой выгрузке создастся отдельный лорбук и привяжется к чату.'
+            : active ? `Записи пишутся в «${esc(target)}» — он подключён к этому чату.`
+                : `Записи пишутся в «${esc(target)}». Он не привязан к чату — сработает, только если включён иначе (глобально или у карточки).${bound ? ` Привязка заменит в этом чате «${esc(bound)}».` : ''}`}</div>
+        <div class="loom-mem-dim">Пишутся только записи памяти; чужие записи лорбука не трогаются, свои обновляются на месте.</div>`;
 }
 
 function renderFacts(m) {
@@ -601,6 +798,12 @@ function onInput(event) {
     const m = memory();
     if (!m) return;
     if (t.classList.contains('loom-mem-ooc')) { form.ooc = t.value; return; }
+    if (t.classList.contains('loom-mem-from') || t.classList.contains('loom-mem-to')) {
+        form[t.classList.contains('loom-mem-from') ? 'from' : 'to'] = t.value;
+        const box = overlay?.querySelector('.loom-mem-sel');
+        if (box) box.innerHTML = selectionHtml(m);
+        return;
+    }
     if (t.classList.contains('loom-mem-summary')) { m.summary.text = t.value; m.summary.dirty = true; return commit(); }
     if (t.classList.contains('loom-mem-depth')) { m.opts.depth = Math.max(0, Math.floor(Number(t.value)) || 0); return commit(); }
     const found = itemOf(t);
@@ -618,9 +821,11 @@ function onChange(event) {
     const t = event.target;
     const m = memory();
     if (!m) return;
-    if (t.classList.contains('loom-mem-range')) { form.range = t.value; return; }
+    if (t.classList.contains('loom-mem-range')) { form.range = t.value; return render(); }
+    if (t.classList.contains('loom-mem-useprev')) { form.usePrev = t.checked; return render(); }
     if (t.classList.contains('loom-mem-want')) { form.want[t.value] = t.checked; return; }
     if (t.classList.contains('loom-mem-ooc-type')) { form.oocType = t.value; return; }
+    if (t.classList.contains('loom-mem-world')) { m.opts.world = t.value; commit(); return render(); }
     if (t.classList.contains('loom-mem-opt')) { m.opts[t.dataset.opt] = t.checked; return commit(); }
     if (t.classList.contains('loom-mem-summary-to')) { m.summary.to = t.value; m.summary.dirty = true; return commit(); }
     const found = itemOf(t);
@@ -675,13 +880,15 @@ async function onClick(event) {
             overlay.querySelector('.loom-mem-entry.open .loom-mem-title')?.focus();
             return;
         }
+        case 'sel-text': form.showText = !form.showText; return render();
+        case 'pick-chat': return startPick();
         case 'analyze': {
             const range = form.range;
             const want = { ...form.want };
             if (!Object.values(want).some(Boolean)) { status = 'Отметьте, что обновлять.'; return render(); }
             return run('Анализирую чат…', async () => {
                 const r = await analyze(range, want);
-                return [`Прочитано сообщений: ${r.count}.`,
+                return [`Прочитано сообщений: ${r.count}${r.skipped ? ` (не влезло ${r.skipped})` : ''}.`,
                     r.summary ? 'Сводка обновлена.' : '',
                     want.facts ? `Фактов +${r.facts}${r.outdated ? `, устарело ${r.outdated}` : ''}.` : '',
                     want.entries ? `Записей +${r.added}${r.updated ? `, обновлено ${r.updated}` : ''}.` : '',
@@ -698,12 +905,114 @@ async function onClick(event) {
                 return `${added ? 'Запись создана' : 'Запись обновлена'}: «${entry.title}».`;
             });
         }
+        case 'dup-world':
+            return run('Создаю дубль…', async () => duplicateWorld(m));
+        case 'bind-world':
+            return run('Привязываю…', async () => {
+                const name = String(m.opts.world || '');
+                if (!name) throw new Error('Сначала выберите лорбук.');
+                const old = ctx().chatMetadata?.[WORLD_KEY];
+                await bindToChat(name);
+                return `«${name}» — теперь лорбук этого чата.${old ? ` «${old}» в этом чате отключён (сам не изменён).` : ''}`;
+            });
         case 'export':
             return run('Выгружаю в лорбук…', async () => {
                 const r = await exportToWorld();
                 return `Выгружено в «${r.name}»: ${r.count}.`;
             });
     }
+}
+
+// ─── Выбор диапазона прямо в чате ───────────────────────────────────────────
+//
+// Окно памяти прячется, внизу появляется плашка; нажатия по сообщениям чата ловятся
+// (ничего другого они в этот момент не делают): первое нажатие — начало, второе — конец,
+// сообщения между ними подсвечиваются. Старые сообщения, которых нет на экране
+// (Таверна рисует только последние), задаются числами в самом окне.
+
+let pick = null; // {a, b, bar, observer}
+
+function pickRange() {
+    const { a, b } = pick;
+    if (a == null) return null;
+    return b == null ? [a, a] : [Math.min(a, b), Math.max(a, b)];
+}
+
+function paintPick() {
+    const range = pickRange();
+    document.querySelectorAll('#chat .mes').forEach(el => {
+        const id = Number(el.getAttribute('mesid'));
+        const inside = range && id >= range[0] && id <= range[1];
+        el.classList.toggle('loom-pick-in', !!inside);
+        el.classList.toggle('loom-pick-edge', !!inside && (id === range[0] || id === range[1]));
+    });
+    const text = !range ? 'Нажмите на первое сообщение диапазона'
+        : pick.b == null ? `С #${range[0]} — нажмите на последнее сообщение`
+            : `Выбрано #${range[0]} – #${range[1]} (сообщений ${range[1] - range[0] + 1})`;
+    pick.bar.querySelector('.loom-pick-text').textContent = text;
+    pick.bar.querySelector('[data-pick="done"]').disabled = !range || pick.b == null;
+}
+
+function onPickClick(event) {
+    if (!pick) return;
+    if (event.target.closest('#loom-pickbar')) return;
+    const mes = event.target.closest('#chat .mes');
+    if (!mes) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const id = Number(mes.getAttribute('mesid'));
+    if (!Number.isFinite(id)) return;
+    if (pick.a == null || pick.b != null) { pick.a = id; pick.b = null; } else pick.b = id;
+    paintPick();
+}
+
+function endPick(apply) {
+    if (!pick) return;
+    const range = apply ? pickRange() : null;
+    document.removeEventListener('click', onPickClick, true);
+    pick.observer?.disconnect();
+    document.querySelectorAll('#chat .mes').forEach(el => el.classList.remove('loom-pick-in', 'loom-pick-edge'));
+    pick.bar.remove();
+    pick = null;
+    if (!overlay) return;
+    overlay.style.display = '';
+    if (range) { form.from = String(range[0]); form.to = String(range[1]); form.range = 'range'; }
+    render();
+}
+
+function startPick() {
+    if (!overlay || pick) return;
+    const bar = document.createElement('div');
+    bar.id = 'loom-pickbar';
+    bar.innerHTML = `
+        <span class="loom-pick-text"></span>
+        <button type="button" class="loom-btn loom-btn-primary loom-btn-small" data-pick="done">Готово</button>
+        <button type="button" class="loom-btn loom-btn-ghost loom-btn-small" data-pick="reset">Сбросить</button>
+        <button type="button" class="loom-btn loom-btn-ghost loom-btn-small" data-pick="cancel">Отмена</button>`;
+    bar.addEventListener('click', (event) => {
+        const kind = event.target.closest('[data-pick]')?.dataset.pick;
+        if (kind === 'done') endPick(true);
+        else if (kind === 'cancel') endPick(false);
+        else if (kind === 'reset') { pick.a = null; pick.b = null; paintPick(); }
+    });
+    document.body.appendChild(bar);
+    pick = { a: null, b: null, bar };
+    const from = Math.floor(Number(form.from));
+    const to = Math.floor(Number(form.to));
+    if (form.from !== '' && form.to !== '' && Number.isFinite(from) && Number.isFinite(to)) { pick.a = Math.min(from, to); pick.b = Math.max(from, to); }
+    overlay.style.display = 'none';
+    document.addEventListener('click', onPickClick, true);
+    // «Показать ещё сообщения» дорисовывает старые — подсветка должна лечь и на них
+    const chatEl = document.getElementById('chat');
+    if (chatEl) {
+        let frame = 0;
+        pick.observer = new MutationObserver(() => {
+            if (frame) return;
+            frame = requestAnimationFrame(() => { frame = 0; if (pick) paintPick(); });
+        });
+        pick.observer.observe(chatEl, { childList: true });
+    }
+    paintPick();
 }
 
 export function openMemory() {
@@ -724,6 +1033,7 @@ export function openMemory() {
 }
 
 export function closeMemory() {
+    if (pick) endPick(false);
     if (overlay) flush();
     overlay?.remove();
     overlay = null;
@@ -760,7 +1070,11 @@ export function initMemory() {
         renderMenuItem();
         syncPrompt();
     });
-    document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && overlay && !busy) closeMemory(); });
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        if (pick) endPick(false);
+        else if (overlay && !busy) closeMemory();
+    });
     renderMenuItem();
     syncPrompt();
 }
