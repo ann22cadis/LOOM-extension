@@ -1715,13 +1715,12 @@ details.loom-format-block[open] > summary { color: var(--loom-text); }
 
 .loom-menu-list {
     display: none;
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
+    /* fixed + координаты из placeMenuList (index.js): не зависит от того, где стоит кнопка */
+    position: fixed;
     z-index: 20;
-    min-width: 100%;
     width: max-content;
-    max-width: 260px;
+    max-width: 280px;
+    box-sizing: border-box;
     padding: 4px;
     /*
      * Список висит над текстом, поэтому ему нужен собственный непрозрачный фон:
@@ -1760,8 +1759,6 @@ details.loom-format-block[open] > summary { color: var(--loom-text); }
 .loom-menu-item:hover { background: var(--loom-surface-hover); }
 .loom-menu-item i { width: 16px; text-align: center; opacity: 0.8; }
 
-/* Меню открывается вправо, если у правого края не хватает места */
-.loom-editor-actions > .loom-menu:last-of-type .loom-menu-list { left: auto; right: 0; }
 
 @media (max-width: 800px) {
     .loom-body { flex-direction: column; }

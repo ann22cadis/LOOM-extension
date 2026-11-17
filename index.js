@@ -293,7 +293,7 @@ function bindPanelEvents() {
         const $menu = $(this).closest('.loom-menu');
         const wasOpen = $menu.hasClass('open');
         $('#loom-import .loom-menu').removeClass('open');
-        if (!wasOpen) $menu.addClass('open');
+        if (!wasOpen) { $menu.addClass('open'); placeMenuList($menu); }
     });
     $(document).on('click.loomImportMenu', () => $('#loom-import .loom-menu').removeClass('open'));
 
@@ -1445,6 +1445,28 @@ function renderEntryHistoryPair(entry) {
  * @param {{icon: string, label: string, items: Array<{action: string, icon: string,
  *   label: string, title?: string}>}} config
  */
+/**
+ * Ставит список меню у кнопки и держит его в пределах экрана: вправо от кнопки, а если там
+ * тесно — прижимается к правому краю; вниз, а если места нет — вверх. Раньше список был
+ * absolute с left/right от самой кнопки и на телефоне наполовину уходил за левый край.
+ */
+function placeMenuList($menu) {
+    const list = $menu.find('.loom-menu-list').get(0);
+    const toggle = $menu.find('.loom-menu-toggle').get(0);
+    if (!list || !toggle) return;
+    const margin = 8;
+    const rect = toggle.getBoundingClientRect();
+    const maxWidth = window.innerWidth - margin * 2;
+    list.style.minWidth = `${Math.min(rect.width, maxWidth)}px`;
+    list.style.maxWidth = `${Math.min(maxWidth, 280)}px`;
+    const width = list.offsetWidth;
+    const height = list.offsetHeight;
+    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+    const below = window.innerHeight - rect.bottom - margin >= height || rect.top < height;
+    list.style.left = `${left}px`;
+    list.style.top = `${below ? rect.bottom + 4 : rect.top - height - 4}px`;
+}
+
 function renderMenu({ icon, label, items }) {
     const list = items.map(item => `
         <button type="button" class="loom-menu-item" data-action="${escapeHtml(item.action)}"
@@ -4973,7 +4995,11 @@ function bindEditorEvents() {
         const open = $menu.hasClass('open');
         $main.find('.loom-menu').removeClass('open');
         $menu.toggleClass('open', !open);
+        if (!open) placeMenuList($menu);
     });
+    // Список меню — fixed, поэтому при прокрутке или повороте экрана он не должен висеть на старом месте
+    $main.on('scroll', () => $main.find('.loom-menu.open').removeClass('open'));
+    $(window).on('resize.loomMenu', () => $('#loom-backdrop .loom-menu.open').removeClass('open'));
 
     // Клик по пункту списка закрывает его — само действие отработает
     // делегированным обработчиком [data-action] ниже
