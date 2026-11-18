@@ -39,6 +39,7 @@ function studio() {
     s.replace ??= '';
     s.sample ??= '';
     s.hideOld ??= true;
+    s.style ??= 'auto';
     return s;
 }
 
@@ -48,34 +49,80 @@ function save() {
 
 // ─── Модель ─────────────────────────────────────────────────────────────────
 
-const RULES = `Rules for the parts:
-- "prompt": an instruction for the roleplay model, written in second person imperative. It tells the model to end EVERY reply
-  with the block in EXACTLY this format (show the template with placeholders), on its own lines, after the prose. The block is
-  data, not prose: short values, no commentary, values update to the current moment of the scene. Mention that the block
-  is hidden/rendered by the interface, so the model must not refer to it in the story.
-- "find": a JavaScript regex in the form /pattern/flags that matches the WHOLE block in a message. Use the "s" flag; tolerate
-  extra spaces and line breaks between fields (\\s*); capture each value in a numbered group ($1, $2…). The tag names must be
-  unusual enough to never appear in normal prose. Escape forward slashes inside the pattern as \\/.
-- "replace": the HTML that replaces the block in the chat. ONE line, no blank lines, no markdown, no <style> or <script> -
-  inline style="" only. Use $1, $2… for the captured values. Use theme variables so it fits light and dark themes:
-  var(--SmartThemeBodyColor) for text, var(--SmartThemeQuoteColor) for accents,
-  var(--SmartThemeBorderColor) for borders, color-mix(in srgb, var(--SmartThemeBodyColor) 6%, transparent) for panel
-  backgrounds. Keep it compact and readable on a phone (max-width:100%, flex-wrap, small font). Font Awesome icons are
-  available as <i class="fa-solid fa-…"></i>.
-- "sample": a realistic example of ONE full model reply (2 short paragraphs of prose) that ends with a filled block.
+/*
+ * Раньше правила оформления были прописаны намертво (только цвета темы, полупрозрачная
+ * подложка, «компактно, мелко», иконки) — и модель каждый раз рисовала одну и ту же
+ * скруглённую карточку. Теперь техника отдельно, а дизайн — направление на выбор.
+ */
+export const STYLES = [
+    { id: 'auto', label: 'Сама придумает', en: 'invent a concept that fits THIS content and the genre of the story - something with a clear identity, not a generic card' },
+    { id: 'hud', label: 'Игровой HUD', en: 'video game HUD: meters and bars for numbers, compact stat rows, badges, monospace numbers, a sense of a game overlay' },
+    { id: 'diary', label: 'Дневник / пергамент', en: 'a handwritten diary page or parchment: warm paper tones, serif or italic type, ink colours, a torn or ruled edge feel' },
+    { id: 'terminal', label: 'Терминал', en: 'a retro computer terminal: dark screen, monospace, phosphor green or amber text, a prompt line, scanline feel' },
+    { id: 'dossier', label: 'Досье', en: 'a confidential dossier or case file: labelled fields like a form, a stamp, typewriter type, paper with a header strip' },
+    { id: 'phone', label: 'Экран телефона', en: 'a smartphone notification or lock-screen widget: status bar, rounded bubble, system font, small app icon' },
+    { id: 'minimal', label: 'Минимал', en: 'barely-there: one or two thin lines of muted small text with separators, no box, no background, very quiet' },
+    { id: 'glass', label: 'Стекло и неон', en: 'glassmorphism with neon accents: translucent layered panel, glow, gradient border, futuristic' },
+    { id: 'vintage', label: 'Старинная табличка', en: 'an antique plaque or theatre programme: ornamental dividers, small caps, gold and dark wood or deep red tones' },
+];
+
+const TECH_RULES = `Technical rules:
+- "prompt": an instruction for the roleplay model, second person imperative. It tells the model to end EVERY reply with the
+  block in EXACTLY this format (show the template with placeholders), on its own lines, after the prose. The block is data,
+  not prose: short values, no commentary, values reflect the current moment of the scene. Say the interface renders the
+  block, so the model must not mention it in the story.
+- "find": a JavaScript regex /pattern/flags matching the WHOLE block. Use the "s" flag; tolerate extra spaces and line breaks
+  between fields (\\s*); capture each value in a numbered group ($1, $2…). Tag names must be unusual enough to never appear
+  in prose. Escape forward slashes inside the pattern as \\/.
+- "replace": the HTML that replaces the block. ONE single line - no line breaks at all (the chat turns them into <br>), no
+  markdown. Use $1, $2… for the values. Allowed: any HTML layout tags, inline style="", one <style>…</style> block at the start
+  (the chat scopes it to the message; your own class names are fine), <details><summary> for collapsible parts, Font Awesome
+  <i class="fa-solid fa-…"></i>, emoji, gradients, shadows, borders, transforms, @keyframes. Not allowed: <script>, event
+  handlers, external images or fonts. Must fit a 360px-wide phone: max-width:100%, flex-wrap, no fixed widths over 340px.
+- "sample": ONE realistic full model reply (2 short paragraphs of prose) ending with a filled block.
 - "name": a short script name, 2-4 words.`;
 
-async function generate() {
+const DESIGN_RULES = `Design rules:
+- Commit to ONE clear visual concept and carry it through: palette, type, shapes, details. Generic "rounded translucent card
+  with icons and small grey text" is the failure mode - do not produce it unless the direction asks for exactly that.
+- Let the data shape the layout: numbers and levels -> bars or meters (style="width:$3%" works for 0-100 values), states ->
+  badges or pills, lists -> chips, time and place -> a header line, mood -> colour or an emoji accent. Mix sizes: one key
+  value large, the rest small.
+- You may use your own palette (hex, rgb, gradients). If you do, give the block its own background so text stays readable on
+  BOTH light and dark chat themes. Theme variables (var(--SmartThemeBodyColor), var(--SmartThemeQuoteColor),
+  var(--SmartThemeBorderColor)) are an option for blocks that should blend in, not a requirement.
+- Fonts available everywhere: Georgia, "Times New Roman", "Courier New", monospace, system-ui, cursive, serif, sans-serif.`;
+
+function designDirection(s) {
+    const style = STYLES.find(x => x.id === s.style) || STYLES[0];
+    return `DESIGN DIRECTION: ${style.en}.`;
+}
+
+function worldContext() {
+    const d = current.draft;
+    const brief = String(d.brief || '').trim();
+    return brief ? `\nWHAT THIS ${d.mode === 'preset' ? 'PRESET' : 'PROMPT'} IS FOR (use it for genre and mood): ${brief.slice(0, 800)}` : '';
+}
+
+/** @param {boolean} [another] «Другой вариант»: тот же блок, но заметно иначе выглядит */
+async function generate(another = false) {
     const s = studio();
+    const avoid = another && s.replace ? s.replace.slice(0, 2500) : '';
     if (!s.idea.trim()) throw new Error('Опишите, какой инфоблок нужен.');
     const prompt = [
         'TASK: design an "info block" for SillyTavern roleplay chats: a structured block the model appends to each reply, '
             + 'plus a regex script that renders it as pretty HTML in the chat.',
         '',
         `WHAT THE USER WANTS IN THE BLOCK:\n${s.idea.trim()}`,
-        s.look.trim() ? `\nHOW IT SHOULD LOOK:\n${s.look.trim()}` : '',
+        s.look.trim() ? `\nHOW IT SHOULD LOOK (the user's words - they outrank the direction below):\n${s.look.trim()}` : '',
+        worldContext(),
         '',
-        RULES,
+        designDirection(s),
+        avoid ? `\nMUST LOOK CLEARLY DIFFERENT from this previous design (other layout, palette and type - not a recolour):\n${avoid}` : '',
+        '',
+        TECH_RULES,
+        '',
+        DESIGN_RULES,
         '',
         'Write prompt, sample and labels in the same language as the user\'s request.',
         'Respond with JSON only: {"name": string, "prompt": string, "find": string, "replace": string, "sample": string}',
@@ -97,7 +144,9 @@ async function refine() {
         'Change only what the request asks; keep the rest. If the block format changes, update prompt, find and sample together '
             + 'so they still match each other.',
         '',
-        RULES,
+        TECH_RULES,
+        '',
+        DESIGN_RULES,
         '',
         'Respond with JSON only: {"name": string, "prompt": string, "find": string, "replace": string, "sample": string}',
     ].join('\n');
@@ -106,8 +155,10 @@ async function refine() {
 
 async function ask(prompt) {
     const reply = await callAI(prompt, {
-        system: 'You design SillyTavern prompts and regex scripts. You write valid JavaScript regex and compact HTML. Answer with JSON only.',
-        maxTokens: 4000,
+        system: 'You are a UI designer and SillyTavern regex expert. You write valid JavaScript regex and distinctive, '
+            + 'well-crafted HTML/CSS with a clear visual identity. Answer with JSON only.',
+        // Своё оформление со <style> длиннее карточки на цветах темы — запас, чтобы ответ не обрывался
+        maxTokens: 7000,
     });
     const parsed = parseJsonLoose(reply, 'find');
     if (!parsed?.find) throw new Error('Модель не вернула регекс.');
@@ -230,10 +281,17 @@ function render() {
                 <section class="loom-mem-card">
                     <h4><i class="fa-solid fa-lightbulb"></i> Что показывать</h4>
                     <textarea class="text_pole" data-field="idea" rows="3" placeholder="Например: статус-бар — дата, время, место, погода, настроение {{char}}, что на нём надето">${esc(s.idea)}</textarea>
-                    <textarea class="text_pole" data-field="look" rows="2" placeholder="Как выглядит (необязательно): тёмная карточка с иконками, как HUD в игре…">${esc(s.look)}</textarea>
-                    <button type="button" class="loom-btn loom-btn-primary loom-mem-wide" data-rx="generate">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> ${s.find ? 'Сделать заново' : 'Сделать'}
-                    </button>
+                    <select class="text_pole" data-field="style">
+                        ${STYLES.map(x => `<option value="${x.id}" ${x.id === s.style ? 'selected' : ''}>Стиль: ${esc(x.label)}</option>`).join('')}
+                    </select>
+                    <textarea class="text_pole" data-field="look" rows="2" placeholder="Своими словами (необязательно, важнее стиля): цвета, настроение, на что похоже">${esc(s.look)}</textarea>
+                    <div class="loom-mem-row">
+                        <button type="button" class="loom-btn loom-btn-primary" data-rx="generate">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> ${s.find ? 'Сделать заново' : 'Сделать'}
+                        </button>
+                        ${s.replace ? `<button type="button" class="loom-btn loom-btn-accent" data-rx="another" title="Тот же блок, но заметно другой дизайн">
+                            <i class="fa-solid fa-shuffle"></i> Другой вариант</button>` : ''}
+                    </div>
                 </section>
 
                 <section class="loom-mem-card">
@@ -306,7 +364,8 @@ async function onClick(event) {
     const s = studio();
     switch (t.dataset.rx) {
         case 'close': return closeRegexStudio();
-        case 'generate': return run('Придумываю блок и регекс…', generate);
+        case 'generate': return run('Придумываю блок и регекс…', () => generate(false));
+        case 'another': return run('Придумываю другой дизайн…', () => generate(true));
         case 'refine': return run('Дорабатываю…', async () => { const r = await refine(); s.fix = ''; save(); return r; });
         case 'save-regex': return run('Сохраняю…', async () => saveToTavern());
         case 'copy-prompt':
